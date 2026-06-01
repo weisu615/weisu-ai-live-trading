@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: weisu-ai-futures-trader
+    env: node
+    plan: starter
+    buildCommand: ""
+    startCommand: "node server.js"
+    healthCheckPath: "/api/state"
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SYMBOL
+        value: BTCUSDT
+      - key: RMB_PER_USDT
+        value: "7.2"
+      - key: MAX_STAKE_USDT
+        value: "8"

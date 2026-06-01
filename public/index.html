@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>魏夙的 AI 实盘</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">W</span>
+          <div>
+            <h1>魏夙的 AI 实盘</h1>
+            <p>Binance BTCUSDT 永续 · 实盘行情 · 模拟账户</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="status-pill" id="modePill">SIMULATED</span>
+          <button class="icon-button" id="toggleBot" title="暂停或恢复自动化">⏸</button>
+          <button class="icon-button" id="advanceBot" title="刷新 Binance 行情">↯</button>
+        </div>
+      </header>
+
+      <section class="metric-grid" aria-label="账户概览">
+        <article class="metric-card accent-gold">
+          <span>账户余额</span>
+          <strong id="balanceRmb">--</strong>
+          <small id="balanceUsdt">--</small>
+        </article>
+        <article class="metric-card accent-green">
+          <span>累计收益</span>
+          <strong id="pnlRmb">--</strong>
+          <small id="pnlUsdt">--</small>
+        </article>
+        <article class="metric-card accent-blue">
+          <span>胜率 / 笔数</span>
+          <strong id="winRate">--</strong>
+          <small id="tradeCount">--</small>
+        </article>
+        <article class="metric-card accent-red">
+          <span>当前周期</span>
+          <strong id="countdown">--</strong>
+          <small id="botStatus">--</small>
+        </article>
+      </section>
+
+      <section class="dashboard">
+        <section class="chart-panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">BTCUSDT 永续 · Binance K线</span>
+              <h2 id="currentPrice">--</h2>
+            </div>
+            <div class="market-meta">
+              <span id="priceChange">--</span>
+              <span id="dataSource">--</span>
+            </div>
+          </div>
+          <div class="chart-toolbar">
+            <div class="timeframe-tabs" id="timeframeTabs" aria-label="K线周期">
+              <button data-timeframe="1m">1m</button>
+              <button data-timeframe="5m">5m</button>
+              <button data-timeframe="10m" class="active">10m</button>
+              <button data-timeframe="15m">15m</button>
+              <button data-timeframe="30m">30m</button>
+              <button data-timeframe="1h">1h</button>
+            </div>
+            <div class="chart-zoom">
+              <button id="panLeft" title="向左平移">‹</button>
+              <input id="rangeSlider" type="range" min="0" max="1000" value="1000" title="拖动全览窗口" />
+              <button id="panRight" title="向右平移">›</button>
+              <button id="zoomOut" title="缩小">−</button>
+              <button id="zoomIn" title="放大">＋</button>
+              <button class="compact-button" id="toggleOverview">全览</button>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="klineCanvas"></canvas>
+          </div>
+          <div class="overview-wrap">
+            <canvas id="overviewCanvas"></canvas>
+          </div>
+        </section>
+
+        <aside class="side-panel">
+          <div class="panel-head compact">
+            <div>
+              <span class="eyebrow">AI Position</span>
+              <h2 id="positionTitle">等待信号</h2>
+            </div>
+            <span class="status-dot" id="statusDot"></span>
+          </div>
+          <dl class="position-list">
+            <div>
+              <dt>方向</dt>
+              <dd id="positionDirection">--</dd>
+            </div>
+            <div>
+              <dt>入场</dt>
+              <dd id="entryPrice">--</dd>
+            </div>
+            <div>
+              <dt>仓位</dt>
+              <dd id="stake">--</dd>
+            </div>
+            <div>
+              <dt>置信度</dt>
+              <dd id="confidence">--</dd>
+            </div>
+          </dl>
+          <div class="ai-note" id="aiNote">系统启动中。</div>
+          <div class="risk-strip">
+            <div>
+              <span>敞口</span>
+              <strong id="exposure">--</strong>
+            </div>
+            <div>
+              <span>回撤</span>
+              <strong id="drawdown">--</strong>
+            </div>
+            <div>
+              <span>连胜败</span>
+              <strong id="streak">--</strong>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      <section class="ledger-panel">
+        <div class="panel-head">
+          <div>
+            <span class="eyebrow">Execution Ledger</span>
+            <h2>订单与复盘</h2>
+          </div>
+          <button class="ghost-button" id="resetBot">重置模拟盘</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>编号</th>
+                <th>下单时间</th>
+                <th>周期</th>
+                <th>方向</th>
+                <th>金额</th>
+                <th>买入点位</th>
+                <th>卖出点位</th>
+                <th>结算时间</th>
+                <th>结果</th>
+                <th>收益</th>
+                <th>AI 总结</th>
+              </tr>
+            </thead>
+            <tbody id="tradeRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "weisu-ai-live-trading",
+  "version": "1.0.0",
+  "private": true,
+  "description": "魏夙的 AI 实盘 - Binance 10m event-contract simulation dashboard",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check public/app.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

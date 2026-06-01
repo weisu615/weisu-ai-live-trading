@@ -1,0 +1,4 @@
+data/state.json
+artifacts/
+node_modules/
+.env
