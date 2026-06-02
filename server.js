@@ -214,7 +214,7 @@ function publicState() {
 }
 
 async function fetchKlinesFromBinance() {
-  const symbol = encodeURIComponent(state.market.symbol || CONFIG.symbol);
+  const symbol = state.market.symbol || CONFIG.symbol;
   const endpoints = buildBinanceFapiEndpoints(symbol);
 
   const errors = [];
@@ -268,8 +268,9 @@ function summarizeKlineFetchErrors(errors) {
   if (!errors.length) return "Unable to fetch Binance USD-M futures market data";
   const hosts = errors.map((error) => error.host).join(", ");
   const lastMessage = errors[errors.length - 1].message;
-  if (errors.some((error) => /\b451\b/.test(error.message))) {
-    return `Binance USD-M Futures 1m failed for ${hosts}. ${REGION_BLOCK_HINT} Last error: ${lastMessage}`;
+  const regionBlock = errors.find((error) => /\b451\b/.test(error.message));
+  if (regionBlock) {
+    return `Binance USD-M Futures 1m failed for ${hosts}. ${REGION_BLOCK_HINT} Blocked endpoint: ${regionBlock.host}. Error: ${regionBlock.message}`;
   }
   return `Binance USD-M Futures 1m failed for ${hosts}. Last error: ${lastMessage}`;
 }
