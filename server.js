@@ -15,6 +15,11 @@ const MARKET_REFRESH_MS = 30 * 1000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const STATE_PATH = process.env.STATE_PATH || path.join(DATA_DIR, "state.json");
 const PUBLIC_DIR = path.join(__dirname, "public");
+const SUPABASE_URL = process.env.SUPABASE_URL?.replace(/\/+$/, "") || "";
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || "";
+const SUPABASE_STATE_TABLE = process.env.SUPABASE_STATE_TABLE || "weisu_bot_state";
+const SUPABASE_STATE_ID = process.env.SUPABASE_STATE_ID || "paper-live-btcusdt";
+const SUPABASE_TIMEOUT_MS = 8000;
 
 const CONFIG = {
   appName: "魏夙的 AI 实盘",
@@ -39,6 +44,7 @@ const DEFAULT_BINANCE_FAPI_BASES = [
   "https://fapi4.binance.com",
 ];
 const REGION_BLOCK_HINT = "HTTP 451: Binance refused futures market-data access from this deployment region/IP. Move the service to a non-restricted region or configure a trusted USD-M futures market-data proxy.";
+const SUPABASE_TABLE_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -132,6 +138,19 @@ function createInitialState() {
 }
 
 async function loadState() {
+  if (hasSupabaseStateStorage()) {
+    try {
+      const loaded = await loadStateFromSupabase();
+      if (loaded) {
+        state = mergeLoadedState(loaded);
+        console.log(`Loaded state from Supabase table ${SUPABASE_STATE_TABLE}/${SUPABASE_STATE_ID}`);
+        return;
+      }
+    } catch (error) {
+      console.warn("Failed to load state from Supabase, falling back to local state:", error.message);
+    }
+  }
+
   try {
     const raw = await fsp.readFile(STATE_PATH, "utf8");
     const loaded = JSON.parse(raw);
@@ -142,6 +161,71 @@ async function loadState() {
     }
     state = createInitialState();
   }
+}
+
+function hasSupabaseStateStorage() {
+  return Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY && SUPABASE_TABLE_NAME_RE.test(SUPABASE_STATE_TABLE));
+}
+
+function buildSupabaseRestUrl(params = "") {
+  const suffix = params ? `?${params}` : "";
+  return `${SUPABASE_URL}/rest/v1/${SUPABASE_STATE_TABLE}${suffix}`;
+}
+
+function supabaseHeaders(extra = {}) {
+  return {
+    apikey: SUPABASE_SERVICE_ROLE_KEY,
+    authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+    "content-type": "application/json",
+    ...extra,
+  };
+}
+
+async function fetchSupabase(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SUPABASE_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(`${response.status} ${response.statusText}${detail ? `: ${detail.slice(0, 240)}` : ""}`);
+    }
+    if (response.status === 204) return null;
+    const text = await response.text();
+    return text ? JSON.parse(text) : null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function loadStateFromSupabase() {
+  const params = new URLSearchParams({
+    id: `eq.${SUPABASE_STATE_ID}`,
+    select: "state",
+    limit: "1",
+  });
+  const rows = await fetchSupabase(buildSupabaseRestUrl(params.toString()), {
+    headers: supabaseHeaders({ accept: "application/json" }),
+  });
+  return Array.isArray(rows) && rows[0]?.state ? rows[0].state : null;
+}
+
+async function saveStateToSupabase(snapshot) {
+  const params = new URLSearchParams({ on_conflict: "id" });
+  await fetchSupabase(buildSupabaseRestUrl(params.toString()), {
+    method: "POST",
+    headers: supabaseHeaders({
+      prefer: "resolution=merge-duplicates,return=minimal",
+    }),
+    body: JSON.stringify({
+      id: SUPABASE_STATE_ID,
+      state: snapshot,
+      updated_at: nowIso(),
+    }),
+  });
 }
 
 function mergeLoadedState(loaded) {
@@ -257,13 +341,27 @@ function restoreClientSnapshot(snapshot = {}) {
 function scheduleSave() {
   clearTimeout(stateSaveTimer);
   stateSaveTimer = setTimeout(async () => {
-    try {
-      await fsp.mkdir(path.dirname(STATE_PATH), { recursive: true });
-      await fsp.writeFile(STATE_PATH, JSON.stringify(state, null, 2), "utf8");
-    } catch (error) {
-      console.warn("Failed to save state:", error.message);
-    }
+    await saveState(state);
   }, 250);
+}
+
+async function saveState(snapshot) {
+  let supabaseSaved = false;
+  if (hasSupabaseStateStorage()) {
+    try {
+      await saveStateToSupabase(snapshot);
+      supabaseSaved = true;
+    } catch (error) {
+      console.warn("Failed to save state to Supabase, writing local fallback:", error.message);
+    }
+  }
+
+  try {
+    await fsp.mkdir(path.dirname(STATE_PATH), { recursive: true });
+    await fsp.writeFile(STATE_PATH, JSON.stringify(snapshot, null, 2), "utf8");
+  } catch (error) {
+    if (!supabaseSaved) console.warn("Failed to save state:", error.message);
+  }
 }
 
 function broadcast() {
@@ -287,6 +385,10 @@ function publicState() {
   const nextSettlementTime = open?.settlementTime || state.bot.nextSettlementTime || state.bot.nextDecisionTime;
   return {
     ...state,
+    storage: {
+      provider: hasSupabaseStateStorage() ? "supabase" : "local-file",
+      stateId: hasSupabaseStateStorage() ? SUPABASE_STATE_ID : null,
+    },
     serverTime: nowIso(),
     countdownMs: nextSettlementTime ? Math.max(0, new Date(nextSettlementTime).getTime() - now) : 0,
   };
