@@ -29,6 +29,15 @@ const CONFIG = {
   maxBootstrapTrades: 4,
 };
 
+const DEFAULT_BINANCE_FAPI_BASES = [
+  "https://fapi.binance.com",
+  "https://fapi1.binance.com",
+  "https://fapi2.binance.com",
+  "https://fapi3.binance.com",
+  "https://fapi4.binance.com",
+];
+const REGION_BLOCK_HINT = "HTTP 451: Binance refused futures market-data access from this deployment region/IP. Move the service to a non-restricted region or configure a trusted USD-M futures market-data proxy.";
+
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -206,35 +215,88 @@ function publicState() {
 
 async function fetchKlinesFromBinance() {
   const symbol = encodeURIComponent(state.market.symbol || CONFIG.symbol);
-  const endpoints = [
-    {
-      source: "Binance USD-M Futures 1m",
-      url: `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol}&interval=1m&limit=720`,
-    },
-  ];
+  const endpoints = buildBinanceFapiEndpoints(symbol);
 
-  let lastError = null;
+  const errors = [];
   for (const endpoint of endpoints) {
     try {
       const raw = await fetchJson(endpoint.url);
       return { source: endpoint.source, raw };
     } catch (error) {
-      lastError = `${endpoint.source}: ${error.message}`;
+      errors.push({ host: endpoint.host, source: endpoint.source, message: error.message });
     }
   }
-  throw new Error(lastError || "Unable to fetch Binance market data");
+  throw new Error(summarizeKlineFetchErrors(errors));
+}
+
+function buildBinanceFapiEndpoints(symbol) {
+  return getBinanceFapiBases().map((base) => {
+    const endpointUrl = new URL("/fapi/v1/klines", base);
+    endpointUrl.searchParams.set("symbol", symbol);
+    endpointUrl.searchParams.set("interval", "1m");
+    endpointUrl.searchParams.set("limit", "720");
+    return {
+      host: endpointUrl.host,
+      source: `Binance USD-M Futures 1m (${endpointUrl.host})`,
+      url: endpointUrl.toString(),
+    };
+  });
+}
+
+function getBinanceFapiBases() {
+  const configured = [process.env.BINANCE_FAPI_BASE_URL, process.env.BINANCE_FAPI_BASES]
+    .filter(Boolean)
+    .join(",");
+  const values = (configured || DEFAULT_BINANCE_FAPI_BASES.join(","))
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const normalized = [];
+  for (const value of values) {
+    try {
+      const url = new URL(value);
+      const base = url.origin;
+      if (!normalized.includes(base)) normalized.push(base);
+    } catch {
+      // Ignore malformed operator-provided endpoint values.
+    }
+  }
+  return normalized.length ? normalized : DEFAULT_BINANCE_FAPI_BASES;
+}
+
+function summarizeKlineFetchErrors(errors) {
+  if (!errors.length) return "Unable to fetch Binance USD-M futures market data";
+  const hosts = errors.map((error) => error.host).join(", ");
+  const lastMessage = errors[errors.length - 1].message;
+  if (errors.some((error) => /\b451\b/.test(error.message))) {
+    return `Binance USD-M Futures 1m failed for ${hosts}. ${REGION_BLOCK_HINT} Last error: ${lastMessage}`;
+  }
+  return `Binance USD-M Futures 1m failed for ${hosts}. Last error: ${lastMessage}`;
 }
 
 async function fetchJson(url) {
   try {
     return await fetchJsonWithNode(url);
   } catch (nodeError) {
+    if (!canUsePowerShellFetch()) {
+      throw new Error(`Node fetch failed (${formatFetchError(nodeError)})`);
+    }
     try {
       return await fetchJsonWithPowerShell(url);
     } catch (psError) {
-      throw new Error(`Node fetch failed (${nodeError.message}); PowerShell fetch failed (${psError.message})`);
+      throw new Error(`Node fetch failed (${formatFetchError(nodeError)}); PowerShell fetch failed (${formatFetchError(psError)})`);
     }
   }
+}
+
+function canUsePowerShellFetch() {
+  return process.platform === "win32" && process.env.DISABLE_POWERSHELL_FETCH !== "1";
+}
+
+function formatFetchError(error) {
+  const message = error?.message || String(error);
+  if (/\b451\b/.test(message)) return `${message}; ${REGION_BLOCK_HINT}`;
+  return message;
 }
 
 async function fetchJsonWithNode(url) {
@@ -246,7 +308,9 @@ async function fetchJsonWithNode(url) {
       headers: { "user-agent": "WeiSu-AI-Live-Trading/1.0" },
     });
     if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`);
+      const body = await response.text();
+      const detail = body.trim().replace(/\s+/g, " ").slice(0, 160);
+      throw new Error(`${response.status} ${response.statusText}${detail ? `: ${detail}` : ""}`);
     }
     return await response.json();
   } finally {
