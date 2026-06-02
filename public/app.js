@@ -1,5 +1,6 @@
 const els = {
   modePill: document.getElementById("modePill"),
+  tickerTape: document.getElementById("tickerTape"),
   toggleBot: document.getElementById("toggleBot"),
   advanceBot: document.getElementById("advanceBot"),
   resetBot: document.getElementById("resetBot"),
@@ -14,6 +15,26 @@ const els = {
   currentPrice: document.getElementById("currentPrice"),
   priceChange: document.getElementById("priceChange"),
   dataSource: document.getElementById("dataSource"),
+  klineRangeLabel: document.getElementById("klineRangeLabel"),
+  flareEvent: document.getElementById("flareEvent"),
+  flareOdds: document.getElementById("flareOdds"),
+  flareFlow: document.getElementById("flareFlow"),
+  flareEdge: document.getElementById("flareEdge"),
+  eventWindow: document.getElementById("eventWindow"),
+  eventOdds: document.getElementById("eventOdds"),
+  callTicket: document.getElementById("callTicket"),
+  putTicket: document.getElementById("putTicket"),
+  callTicketState: document.getElementById("callTicketState"),
+  putTicketState: document.getElementById("putTicketState"),
+  eventHeat: document.getElementById("eventHeat"),
+  eventTempo: document.getElementById("eventTempo"),
+  eventRule: document.getElementById("eventRule"),
+  callEdgeBar: document.getElementById("callEdgeBar"),
+  putEdgeBar: document.getElementById("putEdgeBar"),
+  eventSide: document.getElementById("eventSide"),
+  eventStake: document.getElementById("eventStake"),
+  eventEdge: document.getElementById("eventEdge"),
+  eventSettle: document.getElementById("eventSettle"),
   positionTitle: document.getElementById("positionTitle"),
   positionDirection: document.getElementById("positionDirection"),
   entryPrice: document.getElementById("entryPrice"),
@@ -47,6 +68,8 @@ let restoreAttempted = false;
 let statePollTimer = null;
 let autoAdvanceTimer = null;
 let autoAdvanceInFlight = false;
+let chartCandlesByTimeframe = new Map();
+let chartLoadingTimeframe = null;
 
 const CLIENT_BACKUP_KEY = "weisu-ai-live-trading:snapshot:v1";
 const STATE_POLL_MS = 10 * 1000;
@@ -60,7 +83,13 @@ const TIMEFRAMES = {
   "15m": 15 * 60 * 1000,
   "30m": 30 * 60 * 1000,
   "1h": 60 * 60 * 1000,
+  "1d": 24 * 60 * 60 * 1000,
+  "1w": 7 * 24 * 60 * 60 * 1000,
+  "1M": 30 * 24 * 60 * 60 * 1000,
 };
+
+const SERVER_KLINE_TIMEFRAMES = new Set(["5m", "10m", "15m", "30m", "1h", "1d", "1w", "1M"]);
+const LONG_HISTORY_TIMEFRAMES = new Set(["1d", "1w", "1M"]);
 
 function fmtUsdt(value, digits = 2) {
   return `${Number(value || 0).toFixed(digits)} USDT`;
@@ -126,6 +155,11 @@ function settlementLabel(trade) {
   return "--";
 }
 
+function plainSettlementLabel(trade) {
+  if (!trade?.settlementTime) return "信号到达即开";
+  return fmtDateTime(trade.settlementTime);
+}
+
 function resultText(result) {
   if (result === "WIN") return "成功";
   if (result === "LOSS") return "失败";
@@ -135,6 +169,113 @@ function resultText(result) {
 
 function setText(el, value) {
   el.textContent = value;
+}
+
+function eventOddsText(state, open) {
+  const payout = Number(open?.payoutRate ?? state?.config?.payoutRate ?? 0.82);
+  return `模拟回报 +${Math.round(payout * 100)}%`;
+}
+
+function updateTickerTape(state, priceChange) {
+  const account = state.account || {};
+  const stats = state.stats || {};
+  const price = `$${fmtPrice(state.market?.currentPrice)}`;
+  const pnl = `${account.realizedPnlUsdt >= 0 ? "+" : ""}${fmtUsdt(account.realizedPnlUsdt)}`;
+  const items = [
+    `BTCUSDT 永续 ${price}`,
+    `短线波动 ${priceChange >= 0 ? "+" : ""}${priceChange.toFixed(3)}%`,
+    "事件窗口 10m / 15m",
+    eventOddsText(state, state.openTrade),
+    `胜率 ${stats.winRate || 0}% · 样本 ${stats.settledTrades || 0}`,
+    `余额 ${fmtUsdt(account.availableBalanceUsdt)}`,
+    `累计 ${pnl}`,
+    state.bot?.active ? "AI 扫描高胜率事件" : "AI 已暂停",
+    state.openTrade ? `${durationLabel(state.openTrade)} ${directionText(state.openTrade.direction)} LIVE` : "纪律: 边际不够不买",
+  ];
+  els.tickerTape.innerHTML = [...items, ...items].map((item) => `<span>${item}</span>`).join("");
+}
+
+function confidenceFromBotNote(note) {
+  const match = String(note || "").match(/置信度\s*(\d+)%/);
+  return match ? `${match[1]}%` : "--";
+}
+
+function eventHeatText(state, open) {
+  if (open) return `${Math.round(Number(open.confidence || 0) * 100)}% LIVE`;
+  const skippedConfidence = confidenceFromBotNote(state.bot?.note);
+  if (skippedConfidence !== "--") return `${skippedConfidence} WAIT`;
+  if (!state.bot?.active) return "PAUSED";
+  return "SCANNING";
+}
+
+function eventTempoText(state) {
+  const baseCandles = state.market?.baseCandles || [];
+  const recent = baseCandles.slice(-4);
+  if (recent.length < 2) return "装载行情";
+  const first = recent[0].close || recent[0].open || 0;
+  const last = recent[recent.length - 1].close || first;
+  const movePct = first ? Math.abs((last - first) / first) * 100 : 0;
+  if (movePct >= 0.18) return "高速波动";
+  if (movePct >= 0.08) return "可下注区";
+  return "窄幅磨盘";
+}
+
+function eventRuleText(state, open) {
+  if (open) return `${durationLabel(open)} 到期结算`;
+  if (!state.bot?.active) return "暂停观察";
+  if (state.bot?.status === "signal-skipped") return "边际不够不买";
+  if (state.account?.availableBalanceUsdt < state.config?.minStakeUsdt) return "余额风控";
+  return "只打高胜率";
+}
+
+function impliedEdge(state, open) {
+  const noteConfidence = Number(confidenceFromBotNote(state.bot?.note).replace("%", "")) / 100;
+  const confidence = Number(open?.confidence || noteConfidence || 0.5);
+  const directional = open?.direction === "SHORT" ? -1 : open?.direction === "LONG" ? 1 : Math.sign(Number(state.market?.priceChangePct || 0));
+  const centered = Math.max(0.08, Math.min(0.92, confidence));
+  const longEdge = directional >= 0 ? centered : 1 - centered;
+  return {
+    long: Math.round(Math.max(0.08, Math.min(0.92, longEdge)) * 100),
+    short: Math.round(Math.max(0.08, Math.min(0.92, 1 - longEdge)) * 100),
+  };
+}
+
+function updateMarketFlare(state, open) {
+  const edge = impliedEdge(state, open);
+  setText(els.flareEvent, open ? `${durationLabel(open)} ${directionText(open.direction)}` : "10m / 15m");
+  setText(els.flareOdds, eventOddsText(state, open).replace("模拟回报 ", ""));
+  setText(els.flareFlow, open ? "LIVE TICKET" : eventTempoText(state));
+  setText(els.flareEdge, open ? `${Math.max(edge.long, edge.short)}%` : eventRuleText(state, open));
+}
+
+function updateContractBoard(state, open) {
+  const confidence = Number(open?.confidence || 0);
+  const activeLong = open?.direction === "LONG";
+  const activeShort = open?.direction === "SHORT";
+  const edge = impliedEdge(state, open);
+
+  setText(els.eventWindow, open ? `${durationLabel(open)} 事件合约` : "10m / 15m 候选");
+  setText(els.eventOdds, eventOddsText(state, open));
+  setText(els.callTicketState, activeLong ? "LIVE" : "WAIT");
+  setText(els.putTicketState, activeShort ? "LIVE" : "WAIT");
+  setText(els.eventSide, open ? directionText(open.direction) : "等待高胜率触发");
+  setText(els.eventStake, open ? fmtUsdt(open.stakeUsdt) : `最低 ${fmtUsdt(state.config?.minStakeUsdt || 5)}`);
+  setText(els.eventEdge, open ? `${Math.round(confidence * 100)}%` : `${state.bot?.status || "扫描中"}`);
+  setText(els.eventSettle, plainSettlementLabel(open));
+  setText(els.eventHeat, eventHeatText(state, open));
+  setText(els.eventTempo, eventTempoText(state));
+  setText(els.eventRule, eventRuleText(state, open));
+  updateMarketFlare(state, open);
+
+  els.callTicket.classList.toggle("active", activeLong);
+  els.putTicket.classList.toggle("active", activeShort);
+  els.callTicket.classList.toggle("muted", activeShort);
+  els.putTicket.classList.toggle("muted", activeLong);
+  els.eventHeat.classList.toggle("hot", Boolean(open) && confidence >= 0.66);
+  els.callEdgeBar.style.width = `${edge.long}%`;
+  els.putEdgeBar.style.width = `${edge.short}%`;
+  els.callEdgeBar.parentElement.classList.toggle("hot", activeLong);
+  els.putEdgeBar.parentElement.classList.toggle("hot", activeShort);
 }
 
 function durableTrades(state) {
@@ -229,6 +370,8 @@ function updateState(state) {
   setText(els.priceChange, `${priceChange >= 0 ? "+" : ""}${priceChange.toFixed(3)}%`);
   els.priceChange.className = priceChange >= 0 ? "positive" : "negative";
   setText(els.dataSource, state.market.source || "--");
+  updateTickerTape(state, priceChange);
+  updateContractBoard(state, open);
 
   setText(els.positionTitle, open ? `${open.signalLabel} · ${directionText(open.direction)}` : "等待信号");
   setText(els.positionDirection, open ? directionText(open.direction) : "--");
@@ -284,6 +427,9 @@ function renderTrades(state) {
 
 function aggregateForTimeframe(baseCandles, timeframe) {
   const intervalMs = TIMEFRAMES[timeframe] || TIMEFRAMES["10m"];
+  const loaded = chartCandlesByTimeframe.get(timeframe);
+  if (loaded?.length) return loaded;
+  if (LONG_HISTORY_TIMEFRAMES.has(timeframe)) return [];
   if (timeframe === "10m" && latestState?.market?.candles?.length) return latestState.market.candles;
   if (!baseCandles?.length) return [];
   if (timeframe === "1m") return baseCandles;
@@ -316,9 +462,51 @@ function aggregateForTimeframe(baseCandles, timeframe) {
   return Array.from(buckets.values()).sort((a, b) => a.time - b.time);
 }
 
+function candlesForSelectedTimeframe(state = latestState) {
+  return aggregateForTimeframe(state?.market?.baseCandles || [], selectedTimeframe);
+}
+
+function shouldLoadServerKlines(timeframe) {
+  return SERVER_KLINE_TIMEFRAMES.has(timeframe) && !chartCandlesByTimeframe.has(timeframe) && chartLoadingTimeframe !== timeframe;
+}
+
+function loadTimeframeCandles(timeframe) {
+  if (!shouldLoadServerKlines(timeframe)) return;
+  chartLoadingTimeframe = timeframe;
+  setText(els.klineRangeLabel, `正在加载 Binance 永续 ${timeframe} 历史K线...`);
+
+  fetch(`/api/klines?interval=${encodeURIComponent(timeframe)}`)
+    .then((res) => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    })
+    .then((payload) => {
+      const candles = Array.isArray(payload.candles) ? payload.candles : [];
+      chartCandlesByTimeframe.set(timeframe, candles);
+      if (selectedTimeframe === timeframe && latestState) {
+        if (LONG_HISTORY_TIMEFRAMES.has(timeframe)) {
+          chartView = timeframe === "1d" ? "focus" : "overview";
+          visibleCandles = timeframe === "1d" ? 240 : 180;
+        }
+        syncChartControls(latestState);
+        drawChart(latestState);
+      }
+    })
+    .catch((error) => {
+      if (selectedTimeframe === timeframe) {
+        setText(els.klineRangeLabel, `Binance ${timeframe} 历史K线加载失败：${error.message}`);
+      }
+    })
+    .finally(() => {
+      if (chartLoadingTimeframe === timeframe) chartLoadingTimeframe = null;
+    });
+}
+
 function drawChart(state) {
-  const candlesForTimeframe = aggregateForTimeframe(state.market.baseCandles, selectedTimeframe);
+  loadTimeframeCandles(selectedTimeframe);
+  const candlesForTimeframe = candlesForSelectedTimeframe(state);
   const windowInfo = getWindowInfo(candlesForTimeframe);
+  updateChartRangeLabel(windowInfo);
   drawMainChart(state, windowInfo);
   drawOverviewChart(state, windowInfo);
 }
@@ -335,6 +523,40 @@ function getWindowInfo(allCandles) {
     count,
     total,
   };
+}
+
+function formatAxisDate(timeMs, timeframe = selectedTimeframe) {
+  const date = new Date(timeMs);
+  if (timeframe === "1M") {
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+  }
+  if (timeframe === "1w" || timeframe === "1d") {
+    return `${String(date.getUTCFullYear()).slice(2)}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
+  }
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function updateChartRangeLabel(windowInfo) {
+  const candles = windowInfo.allCandles || [];
+  if (!candles.length) {
+    setText(els.klineRangeLabel, chartLoadingTimeframe === selectedTimeframe ? `正在加载 Binance 永续 ${selectedTimeframe} 历史K线...` : "等待 Binance 永续K线");
+    return;
+  }
+  const first = candles[0];
+  const last = candles[candles.length - 1];
+  const shownStart = windowInfo.candles[0] || first;
+  const shownEnd = windowInfo.candles[windowInfo.candles.length - 1] || last;
+  const scope = LONG_HISTORY_TIMEFRAMES.has(selectedTimeframe) ? "上线以来历史" : "近期历史";
+  setText(
+    els.klineRangeLabel,
+    `${scope} · ${selectedTimeframe} · 全部 ${candles.length} 根 · 当前 ${formatAxisDate(shownStart.openTime)} 至 ${formatAxisDate(shownEnd.openTime)}`,
+  );
 }
 
 function setupCanvas(canvas, minHeight = 320) {
@@ -356,7 +578,10 @@ function setupCanvas(canvas, minHeight = 320) {
 function drawMainChart(state, windowInfo) {
   const { ctx, width, height } = setupCanvas(els.canvas, 320);
   const candles = windowInfo.candles;
-  if (!candles.length) return;
+  if (!candles.length) {
+    drawCanvasMessage(ctx, width, height, chartLoadingTimeframe === selectedTimeframe ? "正在加载 Binance 永续历史K线..." : "等待 Binance 永续K线");
+    return;
+  }
 
   const padding = { top: 20, right: 72, bottom: 34, left: 18 };
   const chartW = width - padding.left - padding.right;
@@ -368,7 +593,9 @@ function drawMainChart(state, windowInfo) {
   const range = Math.max(1, maxPrice - minPrice);
   const priceToY = (price) => padding.top + ((maxPrice - price) / range) * chartH;
   const step = chartW / candles.length;
-  const bodyW = Math.max(4, Math.min(12, step * 0.58));
+  const denseMode = step < 2.4;
+  const drawEvery = denseMode ? Math.max(1, Math.ceil(candles.length / chartW)) : 1;
+  const bodyW = denseMode ? 1 : Math.max(3, Math.min(12, step * 0.58));
 
   ctx.strokeStyle = "rgba(255,255,255,0.08)";
   ctx.lineWidth = 1;
@@ -385,7 +612,35 @@ function drawMainChart(state, windowInfo) {
     ctx.fillText(fmtPrice(price), width - padding.right + 10, y + 4);
   }
 
+  const xTicks = 5;
+  for (let i = 0; i <= xTicks; i += 1) {
+    const index = Math.min(candles.length - 1, Math.round((candles.length - 1) * (i / xTicks)));
+    const candle = candles[index];
+    const x = padding.left + step * index + step / 2;
+    ctx.strokeStyle = "rgba(255,255,255,0.055)";
+    ctx.beginPath();
+    ctx.moveTo(x, padding.top);
+    ctx.lineTo(x, height - padding.bottom);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(155,163,173,0.78)";
+    ctx.fillText(formatAxisDate(candle.openTime), Math.max(padding.left, Math.min(width - padding.right - 58, x - 26)), height - 9);
+  }
+
+  if (denseMode) {
+    ctx.strokeStyle = "rgba(54, 214, 195, 0.76)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    candles.forEach((candle, index) => {
+      const x = padding.left + step * index + step / 2;
+      const y = priceToY(candle.close);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
   candles.forEach((candle, index) => {
+    if (denseMode && index % drawEvery !== 0 && index !== candles.length - 1) return;
     const x = padding.left + step * index + step / 2;
     const up = candle.close >= candle.open;
     const color = up ? "#18c47c" : "#f05d5e";
@@ -425,6 +680,7 @@ function drawMainChart(state, windowInfo) {
   tradeMarkers.forEach((marker) => {
     const { trade, x, y, long, color } = marker;
     const expanded = hoveredMarker === marker;
+    const labelAllowed = expanded || (!denseMode && step >= 24 && tradeMarkers.length <= 14);
     const label = expanded
       ? `${durationLabel(trade)} ${directionText(trade.direction)} ${Number(trade.stakeUsdt).toFixed(2)}U @${fmtPrice(trade.entryPrice)}`
       : `${long ? "涨" : "跌"}${compactStakeText(trade.stakeUsdt)}U`;
@@ -432,23 +688,25 @@ function drawMainChart(state, windowInfo) {
       ? (long ? Math.max(padding.top + 4, y - 38) : Math.min(height - padding.bottom - 26, y + 18))
       : (long ? Math.max(padding.top + 4, y - 24) : Math.min(height - padding.bottom - 16, y + 8));
 
-    ctx.font = expanded ? "700 12px Inter, sans-serif" : "800 9px Inter, sans-serif";
-    const textPadding = expanded ? 9 : 4;
-    const labelWidth = expanded
-      ? Math.min(ctx.measureText(label).width + textPadding * 2, 198)
-      : Math.min(Math.max(ctx.measureText(label).width + textPadding * 2, 28), 46);
-    const labelHeight = expanded ? 26 : 16;
-    const labelX = Math.max(padding.left, Math.min(width - padding.right - labelWidth, x - labelWidth / 2));
-    ctx.globalAlpha = expanded ? 1 : 0.78;
-    ctx.fillStyle = "rgba(8, 9, 11, 0.92)";
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
-    roundRect(ctx, labelX, labelY, labelWidth, labelHeight, expanded ? 6 : 5);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = color;
-    ctx.fillText(label, labelX + textPadding, labelY + (expanded ? 17 : 12), labelWidth - textPadding * 2);
-    ctx.globalAlpha = 1;
+    if (labelAllowed) {
+      ctx.font = expanded ? "700 12px Inter, sans-serif" : "800 9px Inter, sans-serif";
+      const textPadding = expanded ? 9 : 4;
+      const labelWidth = expanded
+        ? Math.min(ctx.measureText(label).width + textPadding * 2, 198)
+        : Math.min(Math.max(ctx.measureText(label).width + textPadding * 2, 28), 46);
+      const labelHeight = expanded ? 26 : 16;
+      const labelX = Math.max(padding.left, Math.min(width - padding.right - labelWidth, x - labelWidth / 2));
+      ctx.globalAlpha = expanded ? 1 : 0.78;
+      ctx.fillStyle = "rgba(8, 9, 11, 0.92)";
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      roundRect(ctx, labelX, labelY, labelWidth, labelHeight, expanded ? 6 : 5);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.fillText(label, labelX + textPadding, labelY + (expanded ? 17 : 12), labelWidth - textPadding * 2);
+      ctx.globalAlpha = 1;
+    }
 
     ctx.fillStyle = color;
     ctx.beginPath();
@@ -478,10 +736,22 @@ function drawMainChart(state, windowInfo) {
   ctx.fillText(`$${fmtPrice(latest.close)}`, width - padding.right + 10, yLatest - 8);
 }
 
+function drawCanvasMessage(ctx, width, height, message) {
+  ctx.fillStyle = "rgba(155,163,173,0.86)";
+  ctx.font = "700 14px Inter, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(message, width / 2, height / 2);
+  ctx.textAlign = "left";
+}
+
 function drawOverviewChart(state, windowInfo) {
   const { ctx, width, height } = setupCanvas(els.overviewCanvas, 74);
-  const candles = (windowInfo.allCandles || []).slice(-360);
-  if (!candles.length) return;
+  const all = windowInfo.allCandles || [];
+  const candles = LONG_HISTORY_TIMEFRAMES.has(selectedTimeframe) ? all : all.slice(-520);
+  if (!candles.length) {
+    drawCanvasMessage(ctx, width, height, "等待全览K线");
+    return;
+  }
 
   const padding = { top: 10, right: 16, bottom: 16, left: 16 };
   const chartW = width - padding.left - padding.right;
@@ -515,11 +785,11 @@ function drawOverviewChart(state, windowInfo) {
 
   ctx.fillStyle = "rgba(155, 163, 173, 0.9)";
   ctx.font = "12px Inter, sans-serif";
-  ctx.fillText(`${selectedTimeframe} 全览`, padding.left, height - 5);
+  ctx.fillText(`${selectedTimeframe} 全览 · ${formatAxisDate(candles[0].openTime)} → ${formatAxisDate(candles[candles.length - 1].openTime)}`, padding.left, height - 5);
 }
 
 function syncChartControls(state = latestState) {
-  const allCandles = aggregateForTimeframe(state?.market?.baseCandles || [], selectedTimeframe);
+  const allCandles = candlesForSelectedTimeframe(state);
   if (allCandles.length) {
     visibleCandles = Math.min(Math.max(18, visibleCandles), allCandles.length);
   }
@@ -534,7 +804,7 @@ function setFocusMode() {
 }
 
 function adjustZoom(multiplier) {
-  const allCandles = aggregateForTimeframe(latestState?.market?.baseCandles || [], selectedTimeframe);
+  const allCandles = candlesForSelectedTimeframe(latestState);
   if (!allCandles.length) return;
   setFocusMode();
   visibleCandles = Math.round(Math.max(18, Math.min(allCandles.length, visibleCandles * multiplier)));
@@ -628,9 +898,19 @@ els.timeframeTabs.addEventListener("click", (event) => {
   const button = event.target.closest("button[data-timeframe]");
   if (!button) return;
   selectedTimeframe = button.dataset.timeframe;
+  viewEndRatio = 1;
+  if (LONG_HISTORY_TIMEFRAMES.has(selectedTimeframe)) {
+    chartView = selectedTimeframe === "1d" ? "focus" : "overview";
+    visibleCandles = selectedTimeframe === "1d" ? 240 : 180;
+  } else {
+    chartView = "focus";
+    visibleCandles = selectedTimeframe === "1h" ? 180 : 64;
+  }
   els.timeframeTabs.querySelectorAll("button").forEach((item) => {
     item.classList.toggle("active", item === button);
   });
+  loadTimeframeCandles(selectedTimeframe);
+  syncChartControls(latestState);
   if (latestState) drawChart(latestState);
 });
 

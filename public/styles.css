@@ -12,6 +12,7 @@
   --red: #f05d5e;
   --blue: #56a8f5;
   --cyan: #36d6c3;
+  --violet: #9b7cff;
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
 }
 
@@ -27,8 +28,8 @@ body {
 body {
   margin: 0;
   background:
-    linear-gradient(180deg, rgba(215, 168, 79, 0.06), transparent 28rem),
-    radial-gradient(circle at 50% -20%, rgba(54, 214, 195, 0.08), transparent 26rem),
+    linear-gradient(180deg, rgba(215, 168, 79, 0.08), transparent 28rem),
+    linear-gradient(120deg, rgba(24, 196, 124, 0.04), transparent 22rem),
     var(--bg);
   color: var(--text);
   font-family:
@@ -140,6 +141,60 @@ h1 {
   background: rgba(215, 168, 79, 0.1);
 }
 
+.ticker-tape {
+  height: 42px;
+  margin-top: 14px;
+  border: 1px solid rgba(215, 168, 79, 0.2);
+  border-radius: 8px;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgba(215, 168, 79, 0.16), transparent 22%, transparent 78%, rgba(54, 214, 195, 0.11)),
+    rgba(9, 12, 15, 0.86);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 18px 52px rgba(0, 0, 0, 0.25);
+}
+
+.ticker-track {
+  width: max-content;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  padding-left: 100%;
+  color: #f8e9c5;
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+  animation: ticker-scroll 30s linear infinite;
+}
+
+.ticker-track span {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-height: 100%;
+  letter-spacing: 0;
+}
+
+.ticker-track span::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-right: 10px;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 0 16px rgba(215, 168, 79, 0.62);
+}
+
+@keyframes ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-50%);
+  }
+}
+
 .metric-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -169,15 +224,44 @@ h1 {
   background: var(--accent);
 }
 
+.metric-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.28;
+  background:
+    linear-gradient(112deg, transparent 0 42%, rgba(255, 255, 255, 0.13) 49%, transparent 57%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 38%);
+  transform: translateX(-78%);
+  animation: premium-card-glint 7.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.metric-card:nth-child(2)::after {
+  animation-delay: 1.1s;
+}
+
+.metric-card:nth-child(3)::after {
+  animation-delay: 2.2s;
+}
+
+.metric-card:nth-child(4)::after {
+  animation-delay: 3.3s;
+}
+
 .metric-card span,
 .metric-card small,
 .eyebrow {
+  position: relative;
+  z-index: 1;
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
 }
 
 .metric-card strong {
+  position: relative;
+  z-index: 1;
   margin-top: 14px;
   font-size: clamp(26px, 3vw, 38px);
   line-height: 1;
@@ -185,6 +269,17 @@ h1 {
 
 .metric-card small {
   margin-top: 10px;
+}
+
+@keyframes premium-card-glint {
+  0%,
+  46% {
+    transform: translateX(-82%);
+  }
+
+  100% {
+    transform: translateX(82%);
+  }
 }
 
 .accent-gold {
@@ -213,7 +308,9 @@ h1 {
 .side-panel,
 .ledger-panel {
   border: 1px solid var(--line);
-  background: rgba(17, 20, 24, 0.88);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)),
+    rgba(17, 20, 24, 0.9);
   border-radius: 8px;
   box-shadow: var(--shadow);
 }
@@ -261,7 +358,7 @@ h1 {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 0 0 12px;
+  margin: 0 0 8px;
 }
 
 .timeframe-tabs {
@@ -310,7 +407,99 @@ h1 {
   padding: 0 9px;
 }
 
+.chart-range-label {
+  min-height: 18px;
+  margin: 0 0 10px;
+  color: #b4bdc9;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.4;
+}
+
+.market-flare {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 10px;
+  border: 1px solid rgba(215, 168, 79, 0.2);
+  border-radius: 8px;
+  overflow: hidden;
+  background:
+    linear-gradient(100deg, rgba(215, 168, 79, 0.13), rgba(24, 196, 124, 0.055), rgba(86, 168, 245, 0.075)),
+    rgba(7, 9, 11, 0.8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.075), 0 12px 38px rgba(0, 0, 0, 0.24);
+}
+
+.market-flare::before,
+.market-flare::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.market-flare::before {
+  inset: 0;
+  background:
+    linear-gradient(115deg, transparent 0 36%, rgba(255, 255, 255, 0.16) 46%, transparent 58%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 18px);
+  opacity: 0.35;
+  transform: translateX(-60%);
+  animation: flare-pass 5.6s ease-in-out infinite;
+}
+
+.market-flare::after {
+  width: 240px;
+  height: 1px;
+  right: -38px;
+  top: 16px;
+  background: linear-gradient(90deg, transparent, rgba(215, 168, 79, 0.62), transparent);
+  box-shadow: 0 0 22px rgba(215, 168, 79, 0.28);
+  transform: rotate(-11deg);
+}
+
+.market-flare div {
+  position: relative;
+  z-index: 1;
+  min-height: 54px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.market-flare span {
+  display: block;
+  color: #89929f;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.market-flare strong {
+  display: block;
+  margin-top: 8px;
+  color: #ffe7b0;
+  font-size: 14px;
+  line-height: 1.12;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+@keyframes flare-pass {
+  0%,
+  38% {
+    transform: translateX(-70%);
+  }
+
+  100% {
+    transform: translateX(82%);
+  }
+}
+
 .chart-wrap {
+  position: relative;
   height: 520px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background:
@@ -320,6 +509,31 @@ h1 {
   background-size: 100% 64px, 72px 100%;
   border-radius: 8px;
   overflow: hidden;
+}
+
+.chart-wrap::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(215, 168, 79, 0.86), rgba(54, 214, 195, 0.5), transparent);
+  box-shadow: 0 0 20px rgba(215, 168, 79, 0.18);
+  transform: translateX(-78%);
+  animation: chart-edge-glint 5.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes chart-edge-glint {
+  0%,
+  42% {
+    transform: translateX(-78%);
+  }
+
+  100% {
+    transform: translateX(78%);
+  }
 }
 
 .overview-wrap {
@@ -362,6 +576,263 @@ h1 {
   box-shadow: 0 0 0 6px rgba(240, 93, 94, 0.1);
 }
 
+.contract-board {
+  padding: 14px;
+  border: 1px solid rgba(215, 168, 79, 0.26);
+  border-radius: 8px;
+  background:
+    linear-gradient(145deg, rgba(215, 168, 79, 0.11), rgba(54, 214, 195, 0.035)),
+    rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+.contract-topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.contract-topline strong {
+  color: #ffe6ae;
+  font-size: 13px;
+}
+
+.ticket-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.event-ticket {
+  min-height: 92px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(8, 10, 12, 0.56);
+}
+
+.event-ticket::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.4;
+  background:
+    linear-gradient(110deg, transparent 0 18%, rgba(255, 255, 255, 0.09) 25%, transparent 33%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.045) 0 1px, transparent 1px 12px);
+  transform: translateX(-24%);
+  animation: ticket-sheen 4.8s ease-in-out infinite;
+}
+
+.event-ticket span,
+.event-ticket strong {
+  position: relative;
+  z-index: 1;
+}
+
+.event-ticket span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.event-ticket strong {
+  font-size: 28px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.event-ticket.call strong {
+  color: #7fffd1;
+}
+
+.event-ticket.put strong {
+  color: #ff9a9a;
+}
+
+.event-ticket.call.active {
+  border-color: rgba(24, 196, 124, 0.64);
+  box-shadow: 0 0 0 1px rgba(24, 196, 124, 0.2), 0 0 34px rgba(24, 196, 124, 0.13);
+}
+
+.event-ticket.put.active {
+  border-color: rgba(240, 93, 94, 0.64);
+  box-shadow: 0 0 0 1px rgba(240, 93, 94, 0.2), 0 0 34px rgba(240, 93, 94, 0.13);
+}
+
+.event-ticket.muted {
+  opacity: 0.52;
+}
+
+.odds-reel {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.odds-cell {
+  min-height: 58px;
+  position: relative;
+  overflow: hidden;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015)),
+    rgba(5, 7, 9, 0.42);
+}
+
+.odds-cell::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(215, 168, 79, 0.86), transparent);
+  animation: odds-scan 2.8s linear infinite;
+}
+
+.odds-cell span,
+.odds-cell strong {
+  position: relative;
+  z-index: 1;
+  display: block;
+}
+
+.odds-cell span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.odds-cell strong {
+  margin-top: 7px;
+  color: #f4f0e8;
+  font-size: 13px;
+  line-height: 1.16;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.odds-cell strong.hot {
+  color: #7fffd1;
+  text-shadow: 0 0 18px rgba(24, 196, 124, 0.45);
+}
+
+.edge-ladder {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012)),
+    rgba(0, 0, 0, 0.2);
+}
+
+.ladder-row {
+  display: grid;
+  grid-template-columns: 66px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.ladder-row span {
+  color: #aab4c0;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.ladder-row i {
+  height: 10px;
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.065);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.ladder-row b {
+  width: 8%;
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  transition: width 420ms ease;
+}
+
+.ladder-row.call b {
+  background: linear-gradient(90deg, rgba(24, 196, 124, 0.48), #7fffd1);
+  box-shadow: 0 0 18px rgba(24, 196, 124, 0.24);
+}
+
+.ladder-row.put b {
+  background: linear-gradient(90deg, rgba(240, 93, 94, 0.48), #ff9a9a);
+  box-shadow: 0 0 18px rgba(240, 93, 94, 0.24);
+}
+
+.ladder-row i.hot {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14), 0 0 24px rgba(215, 168, 79, 0.18);
+}
+
+@keyframes odds-scan {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes ticket-sheen {
+  0%,
+  46% {
+    transform: translateX(-38%);
+  }
+
+  100% {
+    transform: translateX(78%);
+  }
+}
+
+.contract-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+
+.contract-stats div {
+  min-height: 64px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.033);
+}
+
+.contract-stats dt {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.contract-stats dd {
+  margin: 8px 0 0;
+  font-size: 14px;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
 .position-list {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -400,6 +871,17 @@ h1 {
   border: 1px solid rgba(215, 168, 79, 0.22);
   background: rgba(215, 168, 79, 0.055);
   border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track,
+  .market-flare::before,
+  .metric-card::after,
+  .chart-wrap::after,
+  .odds-cell::after,
+  .event-ticket::before {
+    animation: none;
+  }
 }
 
 .risk-strip {
@@ -547,6 +1029,22 @@ td.summary-cell {
   .chart-toolbar {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .ticker-tape {
+    height: 38px;
+  }
+
+  .ticker-track {
+    animation-duration: 38s;
+  }
+
+  .odds-reel {
+    grid-template-columns: 1fr;
+  }
+
+  .market-flare {
+    grid-template-columns: 1fr 1fr;
   }
 
   .timeframe-tabs {

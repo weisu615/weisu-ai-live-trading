@@ -23,6 +23,14 @@
         </div>
       </header>
 
+      <section class="ticker-tape" aria-label="事件合约滚动行情">
+        <div class="ticker-track" id="tickerTape">
+          <span>BTCUSDT 永续事件窗口装载中</span>
+          <span>等待 Binance USD-M Futures 行情</span>
+          <span>模拟账户 · 不触发真实下单</span>
+        </div>
+      </section>
+
       <section class="metric-grid" aria-label="账户概览">
         <article class="metric-card accent-gold">
           <span>账户余额</span>
@@ -66,6 +74,9 @@
               <button data-timeframe="15m">15m</button>
               <button data-timeframe="30m">30m</button>
               <button data-timeframe="1h">1h</button>
+              <button data-timeframe="1d">1d</button>
+              <button data-timeframe="1w">1w</button>
+              <button data-timeframe="1M">1M</button>
             </div>
             <div class="chart-zoom">
               <button id="panLeft" title="向左平移">‹</button>
@@ -74,6 +85,25 @@
               <button id="zoomOut" title="缩小">−</button>
               <button id="zoomIn" title="放大">＋</button>
               <button class="compact-button" id="toggleOverview">全览</button>
+            </div>
+          </div>
+          <div class="chart-range-label" id="klineRangeLabel">加载 Binance 永续K线</div>
+          <div class="market-flare" aria-label="事件合约盘口光带">
+            <div>
+              <span>EVENT</span>
+              <strong id="flareEvent">10m / 15m</strong>
+            </div>
+            <div>
+              <span>ODDS</span>
+              <strong id="flareOdds">+82%</strong>
+            </div>
+            <div>
+              <span>FLOW</span>
+              <strong id="flareFlow">SCANNING</strong>
+            </div>
+            <div>
+              <span>EDGE</span>
+              <strong id="flareEdge">WAIT</strong>
             </div>
           </div>
           <div class="chart-wrap">
@@ -91,6 +121,64 @@
               <h2 id="positionTitle">等待信号</h2>
             </div>
             <span class="status-dot" id="statusDot"></span>
+          </div>
+          <div class="contract-board" aria-label="事件合约票据">
+            <div class="contract-topline">
+              <span id="eventWindow">10m / 15m</span>
+              <strong id="eventOdds">--</strong>
+            </div>
+            <div class="ticket-grid">
+              <div class="event-ticket call" id="callTicket">
+                <span>买涨</span>
+                <strong id="callTicketState">WAIT</strong>
+              </div>
+              <div class="event-ticket put" id="putTicket">
+                <span>买跌</span>
+                <strong id="putTicketState">WAIT</strong>
+              </div>
+            </div>
+            <div class="odds-reel" aria-label="事件合约动态盘口">
+              <div class="odds-cell">
+                <span>信号热度</span>
+                <strong id="eventHeat">--</strong>
+              </div>
+              <div class="odds-cell">
+                <span>盘口节奏</span>
+                <strong id="eventTempo">--</strong>
+              </div>
+              <div class="odds-cell">
+                <span>执行纪律</span>
+                <strong id="eventRule">只打高胜率</strong>
+              </div>
+            </div>
+            <div class="edge-ladder" aria-label="买涨买跌胜率边际">
+              <div class="ladder-row call">
+                <span>买涨边际</span>
+                <i><b id="callEdgeBar"></b></i>
+              </div>
+              <div class="ladder-row put">
+                <span>买跌边际</span>
+                <i><b id="putEdgeBar"></b></i>
+              </div>
+            </div>
+            <dl class="contract-stats">
+              <div>
+                <dt>当前票据</dt>
+                <dd id="eventSide">等待信号</dd>
+              </div>
+              <div>
+                <dt>投入</dt>
+                <dd id="eventStake">--</dd>
+              </div>
+              <div>
+                <dt>胜率边际</dt>
+                <dd id="eventEdge">--</dd>
+              </div>
+              <div>
+                <dt>到期</dt>
+                <dd id="eventSettle">--</dd>
+              </div>
+            </dl>
           </div>
           <dl class="position-list">
             <div>

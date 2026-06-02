@@ -11,6 +11,8 @@ const TEN_MINUTES = 10 * 60 * 1000;
 const FIFTEEN_MINUTES = 15 * 60 * 1000;
 const EVALUATION_COOLDOWN_MS = 60 * 1000;
 const MARKET_REFRESH_MS = 30 * 1000;
+const HISTORICAL_KLINE_CACHE_MS = 10 * 60 * 1000;
+const FUTURES_HISTORY_START_MS = Date.UTC(2019, 8, 1);
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
 const STATE_PATH = process.env.STATE_PATH || path.join(DATA_DIR, "state.json");
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -61,6 +63,7 @@ let subscribers = new Set();
 let lastMarketRefresh = 0;
 let marketRefreshInFlight = null;
 let stateSaveTimer = null;
+const historicalKlineCache = new Map();
 const execFileAsync = promisify(execFile);
 
 function round(value, digits = 4) {
@@ -393,6 +396,9 @@ function publicState() {
   };
 }
 
+const BINANCE_NATIVE_INTERVALS = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"]);
+const FULL_HISTORY_INTERVALS = new Set(["1d", "1w", "1M"]);
+
 async function fetchKlinesFromBinance() {
   const symbol = state.market.symbol || CONFIG.symbol;
   const endpoints = buildBinanceFapiEndpoints(symbol);
@@ -406,7 +412,91 @@ async function fetchKlinesFromBinance() {
       errors.push({ host: endpoint.host, source: endpoint.source, message: error.message });
     }
   }
-  throw new Error(summarizeKlineFetchErrors(errors));
+  throw new Error(summarizeKlineFetchErrors(errors, "1m"));
+}
+
+async function fetchHistoricalKlines(interval) {
+  if (!BINANCE_NATIVE_INTERVALS.has(interval) && interval !== "10m") {
+    throw new Error(`Unsupported kline interval: ${interval}`);
+  }
+
+  if (interval === "10m") {
+    const history = await fetchHistoricalKlines("1m");
+    return {
+      ...history,
+      interval: "10m",
+      source: `${history.source} · aggregated 10m`,
+      candles: aggregateKlinesFromCandles(history.candles, TEN_MINUTES).slice(-720),
+    };
+  }
+
+  const cacheKey = `${CONFIG.symbol}:${interval}`;
+  const cached = historicalKlineCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < HISTORICAL_KLINE_CACHE_MS) {
+    return cached.payload;
+  }
+
+  const fullHistory = FULL_HISTORY_INTERVALS.has(interval);
+  const limit = fullHistory ? 1500 : 1500;
+  const startTime = fullHistory ? FUTURES_HISTORY_START_MS : null;
+  const payload = await fetchBinanceKlinePages({ interval, limit, startTime });
+  historicalKlineCache.set(cacheKey, { cachedAt: Date.now(), payload });
+  return payload;
+}
+
+async function fetchBinanceKlinePages({ interval, limit = 1500, startTime = null }) {
+  const symbol = state.market.symbol || CONFIG.symbol;
+  const bases = getBinanceFapiBases();
+  const errors = [];
+
+  for (const base of bases) {
+    try {
+      const host = new URL(base).host;
+      const raw = [];
+      let nextStart = startTime;
+      const maxLoops = startTime ? 16 : 1;
+
+      for (let loop = 0; loop < maxLoops; loop += 1) {
+        const endpointUrl = new URL("/fapi/v1/klines", base);
+        endpointUrl.searchParams.set("symbol", symbol);
+        endpointUrl.searchParams.set("interval", interval);
+        endpointUrl.searchParams.set("limit", String(limit));
+        if (nextStart) endpointUrl.searchParams.set("startTime", String(nextStart));
+
+        const page = await fetchJson(endpointUrl.toString());
+        if (!Array.isArray(page) || page.length === 0) break;
+        raw.push(...page);
+        if (!startTime || page.length < limit) break;
+
+        const lastOpenTime = Number(page[page.length - 1][0]);
+        const next = lastOpenTime + 1;
+        if (next <= nextStart || lastOpenTime >= Date.now()) break;
+        nextStart = next;
+      }
+
+      const candles = normalizeHistoricalKlines(raw);
+      return {
+        symbol,
+        interval,
+        source: `Binance USD-M Futures ${interval} (${host})`,
+        candles,
+        earliest: candles[0]?.openTime || null,
+        latest: candles[candles.length - 1]?.openTime || null,
+      };
+    } catch (error) {
+      errors.push({ host: safeHost(base), source: `Binance USD-M Futures ${interval}`, message: error.message });
+    }
+  }
+
+  throw new Error(summarizeKlineFetchErrors(errors, interval));
+}
+
+function safeHost(value) {
+  try {
+    return new URL(value).host;
+  } catch {
+    return value;
+  }
 }
 
 function buildBinanceFapiEndpoints(symbol) {
@@ -444,15 +534,15 @@ function getBinanceFapiBases() {
   return normalized.length ? normalized : DEFAULT_BINANCE_FAPI_BASES;
 }
 
-function summarizeKlineFetchErrors(errors) {
+function summarizeKlineFetchErrors(errors, interval = "1m") {
   if (!errors.length) return "Unable to fetch Binance USD-M futures market data";
   const hosts = errors.map((error) => error.host).join(", ");
   const lastMessage = errors[errors.length - 1].message;
   const regionBlock = errors.find((error) => /\b451\b/.test(error.message));
   if (regionBlock) {
-    return `Binance USD-M Futures 1m failed for ${hosts}. ${REGION_BLOCK_HINT} Blocked endpoint: ${regionBlock.host}. Error: ${regionBlock.message}`;
+    return `Binance USD-M Futures ${interval} failed for ${hosts}. ${REGION_BLOCK_HINT} Blocked endpoint: ${regionBlock.host}. Error: ${regionBlock.message}`;
   }
-  return `Binance USD-M Futures 1m failed for ${hosts}. Last error: ${lastMessage}`;
+  return `Binance USD-M Futures ${interval} failed for ${hosts}. Last error: ${lastMessage}`;
 }
 
 async function fetchJson(url) {
@@ -526,10 +616,69 @@ function normalizeKline(raw) {
   };
 }
 
+function normalizeHistoricalKlines(rawKlines) {
+  const deduped = new Map();
+  for (const raw of rawKlines) {
+    const candle = normalizeKline(raw);
+    deduped.set(candle.openTime, {
+      ...candle,
+      time: candle.openTime,
+      open: round(candle.open, 2),
+      high: round(candle.high, 2),
+      low: round(candle.low, 2),
+      close: round(candle.close, 2),
+      volume: round(candle.volume, 3),
+      closed: candle.closeTime < Date.now(),
+    });
+  }
+  return Array.from(deduped.values()).sort((a, b) => a.openTime - b.openTime);
+}
+
 function aggregateKlines(rawKlines, intervalMs = TEN_MINUTES) {
   const buckets = new Map();
 
   for (const item of rawKlines.map(normalizeKline)) {
+    const bucketTime = Math.floor(item.openTime / intervalMs) * intervalMs;
+    const existing = buckets.get(bucketTime);
+    if (!existing) {
+      buckets.set(bucketTime, {
+        time: bucketTime,
+        openTime: bucketTime,
+        closeTime: bucketTime + intervalMs - 1,
+        open: item.open,
+        high: item.high,
+        low: item.low,
+        close: item.close,
+        volume: item.volume,
+        minuteCount: 1,
+      });
+      continue;
+    }
+
+    existing.high = Math.max(existing.high, item.high);
+    existing.low = Math.min(existing.low, item.low);
+    existing.close = item.close;
+    existing.volume += item.volume;
+    existing.minuteCount += 1;
+  }
+
+  return Array.from(buckets.values())
+    .sort((a, b) => a.time - b.time)
+    .map((candle) => ({
+      ...candle,
+      open: round(candle.open, 2),
+      high: round(candle.high, 2),
+      low: round(candle.low, 2),
+      close: round(candle.close, 2),
+      volume: round(candle.volume, 3),
+      closed: candle.closeTime < Date.now(),
+    }));
+}
+
+function aggregateKlinesFromCandles(candles, intervalMs = TEN_MINUTES) {
+  const buckets = new Map();
+
+  for (const item of candles) {
     const bucketTime = Math.floor(item.openTime / intervalMs) * intervalMs;
     const existing = buckets.get(bucketTime);
     if (!existing) {
@@ -1227,6 +1376,13 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/state" && req.method === "GET") {
       sendJson(res, publicState());
+      return;
+    }
+
+    if (url.pathname === "/api/klines" && req.method === "GET") {
+      const interval = url.searchParams.get("interval") || "1d";
+      const history = await fetchHistoricalKlines(interval);
+      sendJson(res, history);
       return;
     }
 
