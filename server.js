@@ -12,7 +12,8 @@ const FIFTEEN_MINUTES = 15 * 60 * 1000;
 const MAX_WAIT_BETWEEN_TRADES = 30 * 60 * 1000;
 const EVALUATION_COOLDOWN_MS = 60 * 1000;
 const MARKET_REFRESH_MS = 30 * 1000;
-const STATE_PATH = path.join(__dirname, "data", "state.json");
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
+const STATE_PATH = process.env.STATE_PATH || path.join(DATA_DIR, "state.json");
 const PUBLIC_DIR = path.join(__dirname, "public");
 
 const CONFIG = {
@@ -27,6 +28,7 @@ const CONFIG = {
   maxStakeBalanceRatio: 0.32,
   payoutRate: 0.82,
   maxBootstrapTrades: 4,
+  maxTradeHistory: Number(process.env.MAX_TRADE_HISTORY || 100),
 };
 
 const DEFAULT_BINANCE_FAPI_BASES = [
@@ -114,6 +116,7 @@ function createInitialState() {
     },
     openTrade: null,
     trades: [],
+    nextTradeSequence: 1,
     insights: [],
     stats: {
       totalTrades: 0,
@@ -143,7 +146,9 @@ async function loadState() {
 
 function mergeLoadedState(loaded) {
   const fresh = createInitialState();
-  const trades = Array.isArray(loaded.trades) ? loaded.trades.map(normalizeTradeShape) : [];
+  const trades = normalizeTradeHistory(loaded.trades);
+  const openTrade = loaded.openTrade ? normalizeTradeShape(loaded.openTrade) : null;
+  const maxSequence = getMaxTradeSequence([...trades, openTrade].filter(Boolean));
   return {
     ...fresh,
     ...loaded,
@@ -152,10 +157,21 @@ function mergeLoadedState(loaded) {
     bot: { ...fresh.bot, ...loaded.bot },
     market: { ...fresh.market, ...loaded.market, symbol: CONFIG.symbol },
     account: { ...fresh.account, ...loaded.account },
-    openTrade: loaded.openTrade ? normalizeTradeShape(loaded.openTrade) : null,
+    openTrade,
     trades,
+    nextTradeSequence: Math.max(
+      Number(loaded.nextTradeSequence || 1),
+      maxSequence + 1,
+      1,
+    ),
     insights: Array.isArray(loaded.insights) ? loaded.insights : [],
   };
+}
+
+function normalizeTradeHistory(trades) {
+  return Array.isArray(trades)
+    ? trades.map(normalizeTradeShape).slice(0, CONFIG.maxTradeHistory)
+    : [];
 }
 
 function normalizeTradeShape(trade) {
@@ -168,11 +184,74 @@ function normalizeTradeShape(trade) {
 
   return {
     ...trade,
+    sequence: getTradeSequence(trade),
     durationMinutes,
     timeframe: `${durationMinutes}m`,
     entryBucket: Number.isFinite(trade.entryBucket) ? trade.entryBucket : bucketOf(entryMs),
     settlementTime: new Date(settlementMs).toISOString(),
   };
+}
+
+function getTradeSequence(trade) {
+  const numeric = Number(trade?.sequence);
+  if (Number.isFinite(numeric) && numeric > 0) return Math.floor(numeric);
+  const parsedId = String(trade?.id || "").match(/(\d+)$/);
+  return parsedId ? Number(parsedId[1]) : 0;
+}
+
+function getMaxTradeSequence(trades) {
+  return trades.reduce((max, trade) => Math.max(max, getTradeSequence(trade)), 0);
+}
+
+function hasDurableHistory() {
+  const nonBootstrapTrades = state.trades.some((trade) => trade.mode !== "historical");
+  const nonBootstrapOpenTrade = Boolean(state.openTrade && state.openTrade.mode !== "historical");
+  return nonBootstrapTrades || nonBootstrapOpenTrade;
+}
+
+function coerceFiniteNumber(value, fallback, min = -Infinity, max = Infinity) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function restoreClientSnapshot(snapshot = {}) {
+  const backupTrades = normalizeTradeHistory(snapshot.trades);
+  const backupOpenTrade = snapshot.openTrade ? normalizeTradeShape(snapshot.openTrade) : null;
+  if (!backupTrades.length && !backupOpenTrade) {
+    return { restored: false, reason: "empty-client-backup" };
+  }
+  if (hasDurableHistory()) {
+    return { restored: false, reason: "server-already-has-history" };
+  }
+
+  const fresh = createInitialState();
+  const account = snapshot.account || {};
+  const restoredAccount = {
+    ...fresh.account,
+    availableBalanceUsdt: coerceFiniteNumber(account.availableBalanceUsdt, fresh.account.availableBalanceUsdt, 0, 100000),
+    equityUsdt: coerceFiniteNumber(account.equityUsdt, fresh.account.equityUsdt, 0, 100000),
+    realizedPnlUsdt: coerceFiniteNumber(account.realizedPnlUsdt, 0, -100000, 100000),
+    realizedPnlRmb: coerceFiniteNumber(account.realizedPnlRmb, 0, -1000000, 1000000),
+    highWaterUsdt: coerceFiniteNumber(account.highWaterUsdt, fresh.account.highWaterUsdt, 0, 100000),
+    maxDrawdownUsdt: coerceFiniteNumber(account.maxDrawdownUsdt, 0, 0, 100000),
+    openExposureUsdt: coerceFiniteNumber(account.openExposureUsdt, 0, 0, 100000),
+  };
+
+  state = {
+    ...fresh,
+    account: restoredAccount,
+    openTrade: backupOpenTrade,
+    trades: backupTrades,
+    nextTradeSequence: getMaxTradeSequence([...backupTrades, backupOpenTrade].filter(Boolean)) + 1,
+    insights: Array.isArray(snapshot.insights) ? snapshot.insights.slice(0, 20) : [],
+  };
+  state.bot.status = "client-history-restored";
+  state.bot.note = `已从浏览器本地备份恢复最近 ${backupTrades.length} 笔历史订单；后端继续扫描 Binance 永续1分钟行情。`;
+  recalculateStats();
+  scheduleSave();
+  broadcast();
+  return { restored: true, count: backupTrades.length };
 }
 
 function scheduleSave() {
@@ -523,8 +602,12 @@ function buildSignal(candles) {
 }
 
 function createTradeId() {
-  const count = state.trades.length + (state.openTrade ? 1 : 0) + 1;
-  return `WS-${String(count).padStart(4, "0")}`;
+  const sequence = Math.max(1, Math.floor(Number(state.nextTradeSequence || 1)));
+  state.nextTradeSequence = sequence + 1;
+  return {
+    id: `WS-${String(sequence).padStart(4, "0")}`,
+    sequence,
+  };
 }
 
 function bucketOf(timeMs) {
@@ -697,8 +780,10 @@ function openTrade(entryPrice, entryTime, signal, mode = "live", decision = {}) 
   const { durationMinutes, durationReason } = chooseTradeDuration(signal, decision);
   const settlementTime = entryTime + durationMs(durationMinutes);
   const { stakeUsdt, stakeReason } = calculateStake(signal, decision);
+  const identity = createTradeId();
   const trade = {
-    id: createTradeId(),
+    id: identity.id,
+    sequence: identity.sequence,
     mode,
     symbol: state.market.symbol,
     timeframe: `${durationMinutes}m`,
@@ -769,7 +854,7 @@ function settleTrade(exitPrice, exitTime) {
   state.account.realizedPnlRmb = round(state.account.realizedPnlUsdt * state.account.rmbPerUsdt, 2);
   state.openTrade = null;
   state.trades.unshift(trade);
-  state.trades = state.trades.slice(0, 120);
+  state.trades = state.trades.slice(0, CONFIG.maxTradeHistory);
   state.bot.status = "waiting-next-cycle";
   state.bot.note = trade.summary;
   state.insights.unshift({
@@ -1060,6 +1145,13 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/advance" && req.method === "POST") {
       await manualAdvance();
       sendJson(res, publicState());
+      return;
+    }
+
+    if (url.pathname === "/api/restore-client-state" && req.method === "POST") {
+      const body = await readBody(req);
+      const result = restoreClientSnapshot(body);
+      sendJson(res, { ...result, state: publicState() });
       return;
     }
 

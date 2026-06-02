@@ -43,6 +43,15 @@ let chartView = "focus";
 let visibleCandles = 64;
 let viewEndRatio = 1;
 let chartHover = { x: null, y: null };
+let restoreAttempted = false;
+let statePollTimer = null;
+let autoAdvanceTimer = null;
+let autoAdvanceInFlight = false;
+
+const CLIENT_BACKUP_KEY = "weisu-ai-live-trading:snapshot:v1";
+const STATE_POLL_MS = 10 * 1000;
+const AUTO_ADVANCE_MS = 30 * 1000;
+const CLIENT_BACKUP_TRADE_LIMIT = 100;
 
 const TIMEFRAMES = {
   "1m": 60 * 1000,
@@ -128,6 +137,77 @@ function setText(el, value) {
   el.textContent = value;
 }
 
+function durableTrades(state) {
+  return [
+    ...(state?.trades || []),
+    state?.openTrade,
+  ].filter((trade) => trade && trade.mode !== "historical");
+}
+
+function buildClientBackup(state) {
+  return {
+    updatedAt: state.updatedAt || state.serverTime || new Date().toISOString(),
+    account: state.account,
+    openTrade: state.openTrade || null,
+    trades: (state.trades || []).slice(0, CLIENT_BACKUP_TRADE_LIMIT),
+    insights: (state.insights || []).slice(0, 20),
+  };
+}
+
+function saveClientBackup(state) {
+  if (!window.localStorage || !state) return;
+  const hasTradeHistory = (state.trades || []).length || state.openTrade;
+  const hasAccountHistory = Math.abs(Number(state.account?.realizedPnlUsdt || 0)) > 0.0001;
+  if (!hasTradeHistory && !hasAccountHistory) return;
+  try {
+    localStorage.setItem(CLIENT_BACKUP_KEY, JSON.stringify(buildClientBackup(state)));
+  } catch {
+    // Local browser storage can be unavailable in private modes; server state remains primary.
+  }
+}
+
+function readClientBackup() {
+  if (!window.localStorage) return null;
+  try {
+    const raw = localStorage.getItem(CLIENT_BACKUP_KEY);
+    if (!raw) return null;
+    const backup = JSON.parse(raw);
+    if (!Array.isArray(backup.trades)) return null;
+    return backup;
+  } catch {
+    return null;
+  }
+}
+
+function clearClientBackup() {
+  try {
+    localStorage.removeItem(CLIENT_BACKUP_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function shouldRestoreFromClientBackup(serverState, backup) {
+  if (restoreAttempted || !backup) return false;
+  const backupCount = (backup.trades || []).length + (backup.openTrade ? 1 : 0);
+  if (!backupCount) return false;
+  const serverDurableCount = durableTrades(serverState).length;
+  return serverDurableCount === 0;
+}
+
+async function restoreClientBackupIfNeeded(serverState) {
+  const backup = readClientBackup();
+  if (!shouldRestoreFromClientBackup(serverState, backup)) return serverState;
+  restoreAttempted = true;
+  const response = await fetch("/api/restore-client-state", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(backup),
+  });
+  const result = await response.json();
+  return result.state || serverState;
+}
+
 function updateState(state) {
   latestState = state;
   const account = state.account;
@@ -169,6 +249,7 @@ function updateState(state) {
   syncChartControls(state);
   drawChart(state);
   startCountdown();
+  saveClientBackup(state);
 }
 
 function renderTrades(state) {
@@ -177,14 +258,14 @@ function renderTrades(state) {
   rows.push(...state.trades);
 
   els.tradeRows.innerHTML = rows
-    .slice(0, 30)
+    .slice(0, CLIENT_BACKUP_TRADE_LIMIT)
     .map((trade) => {
       const resultClass = trade.result === "WIN" ? "win" : trade.result === "LOSS" ? "loss" : trade.result === "FLAT" ? "flat" : "pending";
       const directionClass = trade.direction === "LONG" ? "long" : "short";
       const pnlClass = trade.pnlUsdt >= 0 ? "positive" : "negative";
       return `
         <tr>
-          <td>${trade.id}</td>
+          <td>${trade.sequence ? `#${trade.sequence}` : trade.id}</td>
           <td>${fmtDateTime(trade.entryTime)}</td>
           <td><span class="tag period">${durationLabel(trade)}</span></td>
           <td><span class="tag ${directionClass}">${directionText(trade.direction)}</span></td>
@@ -496,6 +577,38 @@ async function postJson(url, body = {}) {
   });
   const state = await response.json();
   updateState(state);
+  return state;
+}
+
+async function fetchState() {
+  const state = await fetch("/api/state").then((res) => res.json());
+  updateState(state);
+  return state;
+}
+
+function startStatePolling() {
+  clearInterval(statePollTimer);
+  statePollTimer = setInterval(() => {
+    fetchState().catch(() => {});
+  }, STATE_POLL_MS);
+}
+
+async function runAutoAdvance() {
+  if (autoAdvanceInFlight || document.hidden) return;
+  autoAdvanceInFlight = true;
+  try {
+    await postJson("/api/advance");
+  } catch {
+    fetchState().catch(() => {});
+  } finally {
+    autoAdvanceInFlight = false;
+  }
+}
+
+function startAutoAdvance() {
+  clearInterval(autoAdvanceTimer);
+  window.setTimeout(() => runAutoAdvance(), 2000);
+  autoAdvanceTimer = setInterval(() => runAutoAdvance(), AUTO_ADVANCE_MS);
 }
 
 els.toggleBot.addEventListener("click", () => {
@@ -507,6 +620,7 @@ els.advanceBot.addEventListener("click", () => {
 });
 
 els.resetBot.addEventListener("click", () => {
+  clearClientBackup();
   postJson("/api/reset");
 });
 
@@ -554,12 +668,19 @@ window.addEventListener("resize", () => {
 
 async function boot() {
   const initial = await fetch("/api/state").then((res) => res.json());
-  updateState(initial);
+  const restored = await restoreClientBackupIfNeeded(initial);
+  updateState(restored);
 
   const stream = new EventSource("/api/stream");
   stream.addEventListener("message", (event) => {
     updateState(JSON.parse(event.data));
   });
+  stream.addEventListener("error", () => {
+    fetchState().catch(() => {});
+  });
+
+  startStatePolling();
+  startAutoAdvance();
 }
 
 boot().catch((error) => {
