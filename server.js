@@ -9,7 +9,6 @@ const { URL } = require("node:url");
 const PORT = Number(process.env.PORT || 8787);
 const TEN_MINUTES = 10 * 60 * 1000;
 const FIFTEEN_MINUTES = 15 * 60 * 1000;
-const MAX_WAIT_BETWEEN_TRADES = 30 * 60 * 1000;
 const EVALUATION_COOLDOWN_MS = 60 * 1000;
 const MARKET_REFRESH_MS = 30 * 1000;
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, "data");
@@ -754,12 +753,12 @@ function findTradeSettlementCandle(trade) {
 function getLastEntryTimeMs(currentTime) {
   if (state.openTrade?.entryTime) return new Date(state.openTrade.entryTime).getTime();
   if (state.trades[0]?.entryTime) return new Date(state.trades[0].entryTime).getTime();
-  return currentTime - MAX_WAIT_BETWEEN_TRADES;
+  return null;
 }
 
 function evaluateTradeDecision(signal, currentTime) {
   const lastEntryTime = getLastEntryTimeMs(currentTime);
-  const waitedMs = currentTime - lastEntryTime;
+  const waitedMinutes = lastEntryTime ? Math.max(0, Math.round((currentTime - lastEntryTime) / 60000)) : 0;
   const recent = state.trades.slice(0, 2);
   const recentLosses = recent.filter((trade) => trade.result === "LOSS").length;
   const minConfidence = recentLosses ? 0.65 : 0.61;
@@ -770,7 +769,6 @@ function evaluateTradeDecision(signal, currentTime) {
   const highConviction = signal.confidence >= 0.66 && absScore >= 0.52;
   const enoughSignal = signal.confidence >= minConfidence && absScore >= minScore;
   const opportunisticSignal = highConviction && (strongMomentum || volumeConfirmed);
-  const forcedByWait = waitedMs >= MAX_WAIT_BETWEEN_TRADES && signal.confidence >= 0.54 && absScore >= 0.12;
 
   if (opportunisticSignal) {
     return {
@@ -790,21 +788,11 @@ function evaluateTradeDecision(signal, currentTime) {
     };
   }
 
-  if (forcedByWait) {
-    return {
-      shouldOpen: true,
-      forceMinStake: true,
-      trigger: "最长等待试探",
-      reason: `已等待 ${Math.round(waitedMs / 60000)} 分钟，触发最长等待规则；信号偏弱但不是随机噪音，只用最低仓位试探。`,
-    };
-  }
-
-  const waitLeft = Math.max(0, MAX_WAIT_BETWEEN_TRADES - waitedMs);
   return {
     shouldOpen: false,
     forceMinStake: false,
     trigger: "继续扫描",
-    reason: `继续扫描：置信度 ${Math.round(signal.confidence * 100)}%，强度 ${absScore.toFixed(2)}，量能 ${Number(signal.volumeRatio || 1).toFixed(2)}x，还没到值得出手的胜率；最长等待还剩约 ${Math.ceil(waitLeft / 60000)} 分钟。`,
+    reason: `继续扫描：置信度 ${Math.round(signal.confidence * 100)}%，强度 ${absScore.toFixed(2)}，量能 ${Number(signal.volumeRatio || 1).toFixed(2)}x，事件合约胜率边际不足；${waitedMinutes ? `距离上次进场约 ${waitedMinutes} 分钟，` : ""}不因等待时间强行下单。`,
   };
 }
 
@@ -975,19 +963,40 @@ function buildTradeSummary(trade) {
   const directionText = trade.direction === "LONG" ? "买涨" : "买跌";
   const durationText = `${trade.durationMinutes || 10}分钟`;
   const moveText = `价格从 ${formatPrice(trade.entryPrice)} 到 ${formatPrice(trade.exitPrice)}，波动 ${trade.priceMovePct}%`;
+  const confidenceText = Number.isFinite(Number(trade.confidence))
+    ? `入场置信度 ${Math.round(Number(trade.confidence) * 100)}%`
+    : "入场置信度未记录";
+  const strengthText = Number.isFinite(Number(trade.score))
+    ? `信号强度 ${Math.abs(Number(trade.score)).toFixed(2)}`
+    : "信号强度未记录";
+  const triggerText = trade.trigger ? `触发来源：${trade.trigger}` : "触发来源：事件信号";
+  const durationReason = trade.durationReason || "周期按事件合约短线风险控制选择";
+  const context = `${triggerText}，${confidenceText}，${strengthText}，周期理由：${durationReason}`;
 
   if (trade.result === "WIN") {
-    return `${durationText}${directionText}成功：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}。入场信号和订单到期方向一致，净收益 ${trade.pnlUsdt.toFixed(2)} USDT。下一轮继续按风险模型评估，不因连胜盲目放大。`;
+    const lesson = Math.abs(trade.priceMovePct) < 0.08
+      ? "这笔胜利来自到期方向判断正确，但价差不大，说明边际存在但不算厚，后续不能因为赢了就放大仓位。"
+      : "这笔胜利说明入场后的短周期动量延续到了到期点，信号与事件合约时间窗匹配度较好。";
+    return `${durationText}${directionText}成功：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}，净收益 ${trade.pnlUsdt.toFixed(2)} USDT。${context}。${lesson} 下一轮继续看量能、动量和到期窗口是否同步，只在边际还够厚时出手。`;
   }
 
   if (trade.result === "LOSS") {
-    const diagnosis = Math.abs(trade.priceMovePct) < 0.06
-      ? "失败主要来自窄幅震荡，方向判断没有足够空间兑现"
-      : "失败主要来自入场后反向突破，短周期信号被反抽打穿";
-    return `${durationText}${directionText}失败：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}。${diagnosis}，亏损 ${Math.abs(trade.pnlUsdt).toFixed(2)} USDT。下一轮仓位降档，降低对单一动量信号的权重，优先看量能和均线是否同步。`;
+    const againstDirection = trade.direction === "LONG" ? trade.priceMovePct < 0 : trade.priceMovePct > 0;
+    let diagnosis = "失败原因需要继续从信号源拆解";
+    if (Math.abs(trade.priceMovePct) < 0.06) {
+      diagnosis = "到期价差太窄，事件合约方向虽然可判断但赔率边际不厚，容易被噪音吞掉";
+    } else if (againstDirection) {
+      diagnosis = "入场后价格反向推进，说明短周期触发信号没有获得后续资金流确认";
+    } else {
+      diagnosis = "方向并非完全错误，但到期点没有站在有利一侧，时间窗选择或入场点需要优化";
+    }
+    const nextAdjustment = Math.abs(Number(trade.score || 0)) < 0.45
+      ? "下一轮提高信号强度门槛，弱信号只做影子观察。"
+      : "下一轮重点复核量能和3根动量是否同向，避免单一指标触发。";
+    return `${durationText}${directionText}失败：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}，亏损 ${Math.abs(trade.pnlUsdt).toFixed(2)} USDT。${context}。${diagnosis}。${nextAdjustment}`;
   }
 
-  return `${durationText}${directionText}持平：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}。本轮退回本金，信号没有形成有效价格差，下一轮继续扫描更清晰的盘中结构。`;
+  return `${durationText}${directionText}持平：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}。${context}。本轮退回本金，说明事件窗口内没有形成足够价格差；下一轮优先等待更清晰的突破、放量或反转确认。`;
 }
 
 function recalculateAccountExposure() {
