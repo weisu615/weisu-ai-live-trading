@@ -55,7 +55,8 @@ const els = {
   drawdown: document.getElementById("drawdown"),
   streak: document.getElementById("streak"),
   statusDot: document.getElementById("statusDot"),
-  tradeRows: document.getElementById("tradeRows"),
+  aiTradeRows: document.getElementById("aiTradeRows"),
+  userTradeRows: document.getElementById("userTradeRows"),
   canvas: document.getElementById("klineCanvas"),
   overviewCanvas: document.getElementById("overviewCanvas"),
   timeframeTabs: document.getElementById("timeframeTabs"),
@@ -307,8 +308,8 @@ function updateManualOrderPanel(state) {
   const minStake = Number(state.config?.minStakeUsdt || 5);
   const balance = Number(state.account?.availableBalanceUsdt || 0);
   const hasPrice = Number(state.market?.currentPrice || 0) > 0;
-  const hasOpenTrade = Boolean(state.openTrade);
-  const disabled = hasOpenTrade || balance < minStake || !hasPrice;
+  const userOpen = state.userOpenTrade;
+  const disabled = Boolean(userOpen) || balance < minStake || !hasPrice;
 
   els.manualStake.min = String(minStake);
   els.manualStake.max = String(Math.max(minStake, balance).toFixed(2));
@@ -323,14 +324,14 @@ function updateManualOrderPanel(state) {
     button.disabled = disabled;
   });
   els.manualStake.disabled = disabled && balance < minStake;
-  els.manualDuration.disabled = disabled && hasOpenTrade;
+  els.manualDuration.disabled = Boolean(userOpen);
 
   setText(els.userHabitWinRate, `${Number(habits.winRate || 0).toFixed(1)}%`);
   setText(els.userHabitSamples, `${habits.totalTrades || 0} 笔`);
   setText(els.userHabitBias, userHabitBiasText(habits));
 
-  if (hasOpenTrade) {
-    setText(els.manualStatus, "当前已有未结算票据，等结算后再手动参与。");
+  if (userOpen) {
+    setText(els.manualStatus, `${durationLabel(userOpen)} ${directionText(userOpen.direction)} 手动票据 LIVE，预计 ${plainSettlementLabel(userOpen)} 结算。`);
   } else if (balance < minStake) {
     setText(els.manualStatus, `可用余额低于 ${minStake.toFixed(2)} USDT，暂不能手动下单。`);
   } else if (!hasPrice) {
@@ -344,6 +345,7 @@ function durableTrades(state) {
   return [
     ...(state?.trades || []),
     state?.openTrade,
+    state?.userOpenTrade,
   ].filter((trade) => trade && trade.mode !== "historical");
 }
 
@@ -353,6 +355,7 @@ function buildClientBackup(state) {
     serverResetAt: state.bot?.manualResetAt || null,
     account: state.account,
     openTrade: state.openTrade || null,
+    userOpenTrade: state.userOpenTrade || null,
     trades: (state.trades || []).slice(0, CLIENT_BACKUP_TRADE_LIMIT),
     insights: (state.insights || []).slice(0, 20),
     userHabits: state.userHabits || null,
@@ -361,7 +364,7 @@ function buildClientBackup(state) {
 
 function saveClientBackup(state) {
   if (!window.localStorage || !state) return;
-  const hasTradeHistory = (state.trades || []).length || state.openTrade;
+  const hasTradeHistory = (state.trades || []).length || state.openTrade || state.userOpenTrade;
   const hasAccountHistory = Math.abs(Number(state.account?.realizedPnlUsdt || 0)) > 0.0001;
   const resetLocked = state.bot?.manualResetAt || state.bot?.status === "paused-after-reset";
   if (resetLocked && !hasTradeHistory && !hasAccountHistory) {
@@ -399,7 +402,7 @@ function clearClientBackup() {
 
 function shouldRestoreFromClientBackup(serverState, backup) {
   if (restoreAttempted || !backup) return false;
-  const backupCount = (backup.trades || []).length + (backup.openTrade ? 1 : 0);
+  const backupCount = (backup.trades || []).length + (backup.openTrade ? 1 : 0) + (backup.userOpenTrade ? 1 : 0);
   if (!backupCount) return false;
   const serverDurableCount = durableTrades(serverState).length;
   return serverDurableCount === 0;
@@ -466,11 +469,22 @@ function updateState(state) {
 }
 
 function renderTrades(state) {
-  const rows = [];
-  if (state.openTrade) rows.push(state.openTrade);
-  rows.push(...state.trades);
+  const aiRows = [
+    state.openTrade,
+    ...(state.trades || []).filter((trade) => trade.mode !== "user-manual" && !trade.userManual),
+  ].filter(Boolean);
+  const userRows = [
+    state.userOpenTrade,
+    ...(state.trades || []).filter((trade) => trade.mode === "user-manual" || trade.userManual),
+  ].filter(Boolean);
 
-  els.tradeRows.innerHTML = rows
+  renderTradeTable(els.aiTradeRows, aiRows);
+  renderTradeTable(els.userTradeRows, userRows);
+}
+
+function renderTradeTable(target, rows) {
+  if (!target) return;
+  target.innerHTML = rows
     .slice(0, CLIENT_BACKUP_TRADE_LIMIT)
     .map((trade) => {
       const resultClass = trade.result === "WIN" ? "win" : trade.result === "LOSS" ? "loss" : trade.result === "FLAT" ? "flat" : "pending";
@@ -731,7 +745,7 @@ function drawMainChart(state, windowInfo) {
     ctx.fillRect(x - bodyW / 2, top, bodyW, bodyH);
   });
 
-  const trades = [...(state.trades || []), state.openTrade].filter(Boolean);
+  const trades = [...(state.trades || []), state.openTrade, state.userOpenTrade].filter(Boolean);
   const tradeMarkers = trades.map((trade) => {
     const entryTime = new Date(trade.entryTime).getTime();
     const index = candles.findIndex((candle) => entryTime >= candle.openTime && entryTime <= candle.closeTime);
@@ -904,8 +918,13 @@ function roundRect(ctx, x, y, width, height, radius) {
 function startCountdown() {
   clearInterval(countdownTimer);
   countdownTimer = setInterval(() => {
-    if (!latestState?.openTrade?.settlementTime) return;
-    const ms = new Date(latestState.openTrade.settlementTime).getTime() - Date.now();
+    const nextSettlement = [latestState?.openTrade, latestState?.userOpenTrade]
+      .filter(Boolean)
+      .map((trade) => trade.settlementTime)
+      .filter(Boolean)
+      .sort((a, b) => new Date(a).getTime() - new Date(b).getTime())[0];
+    if (!nextSettlement) return;
+    const ms = new Date(nextSettlement).getTime() - Date.now();
     setText(els.countdown, formatCountdown(ms));
   }, 1000);
 }

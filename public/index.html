@@ -250,35 +250,68 @@
         </aside>
       </section>
 
-      <section class="ledger-panel">
-        <div class="panel-head">
-          <div>
-            <span class="eyebrow">Execution Ledger</span>
-            <h2>订单与复盘</h2>
+      <section class="ledger-grid" aria-label="订单与复盘">
+        <section class="ledger-panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">AI Execution Ledger</span>
+              <h2>AI 订单与复盘</h2>
+            </div>
+            <button class="ghost-button" id="resetBot">重置模拟盘</button>
           </div>
-          <button class="ghost-button" id="resetBot">重置模拟盘</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>编号</th>
-                <th>下单时间</th>
-                <th>周期</th>
-                <th>方向</th>
-                <th>来源</th>
-                <th>金额</th>
-                <th>买入点位</th>
-                <th>卖出点位</th>
-                <th>结算时间</th>
-                <th>结果</th>
-                <th>收益</th>
-                <th>AI 总结</th>
-              </tr>
-            </thead>
-            <tbody id="tradeRows"></tbody>
-          </table>
-        </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>编号</th>
+                  <th>下单时间</th>
+                  <th>周期</th>
+                  <th>方向</th>
+                  <th>来源</th>
+                  <th>金额</th>
+                  <th>买入点位</th>
+                  <th>卖出点位</th>
+                  <th>结算时间</th>
+                  <th>结果</th>
+                  <th>收益</th>
+                  <th>AI 自我复盘</th>
+                </tr>
+              </thead>
+              <tbody id="aiTradeRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="ledger-panel user-ledger">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">WeiSu Manual Ledger</span>
+              <h2>魏夙手动订单与复盘</h2>
+            </div>
+            <span class="status-pill subtle">手动画像独立统计</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>编号</th>
+                  <th>下单时间</th>
+                  <th>周期</th>
+                  <th>方向</th>
+                  <th>来源</th>
+                  <th>金额</th>
+                  <th>买入点位</th>
+                  <th>卖出点位</th>
+                  <th>结算时间</th>
+                  <th>结果</th>
+                  <th>收益</th>
+                  <th>AI 对魏夙的复盘</th>
+                </tr>
+              </thead>
+              <tbody id="userTradeRows"></tbody>
+            </table>
+          </div>
+        </section>
       </section>
     </main>
 

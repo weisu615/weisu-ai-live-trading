@@ -124,6 +124,7 @@ function createInitialState() {
       priceChangePct: 0,
     },
     openTrade: null,
+    userOpenTrade: null,
     trades: [],
     nextTradeSequence: 1,
     insights: [],
@@ -251,8 +252,13 @@ async function saveStateToSupabase(snapshot) {
 function mergeLoadedState(loaded) {
   const fresh = createInitialState();
   const trades = normalizeTradeHistory(loaded.trades);
-  const openTrade = loaded.openTrade ? normalizeTradeShape(loaded.openTrade) : null;
-  const maxSequence = getMaxTradeSequence([...trades, openTrade].filter(Boolean));
+  let openTrade = loaded.openTrade ? normalizeTradeShape(loaded.openTrade) : null;
+  let userOpenTrade = loaded.userOpenTrade ? normalizeTradeShape(loaded.userOpenTrade) : null;
+  if (openTrade?.mode === "user-manual" && !userOpenTrade) {
+    userOpenTrade = openTrade;
+    openTrade = null;
+  }
+  const maxSequence = getMaxTradeSequence([...trades, openTrade, userOpenTrade].filter(Boolean));
   return {
     ...fresh,
     ...loaded,
@@ -262,6 +268,7 @@ function mergeLoadedState(loaded) {
     market: { ...fresh.market, ...loaded.market, symbol: CONFIG.symbol },
     account: { ...fresh.account, ...loaded.account },
     openTrade,
+    userOpenTrade,
     trades,
     nextTradeSequence: Math.max(
       Number(loaded.nextTradeSequence || 1),
@@ -320,7 +327,8 @@ function getMaxTradeSequence(trades) {
 function hasDurableHistory() {
   const nonBootstrapTrades = state.trades.some((trade) => trade.mode !== "historical");
   const nonBootstrapOpenTrade = Boolean(state.openTrade && state.openTrade.mode !== "historical");
-  return nonBootstrapTrades || nonBootstrapOpenTrade;
+  const nonBootstrapUserOpenTrade = Boolean(state.userOpenTrade && state.userOpenTrade.mode !== "historical");
+  return nonBootstrapTrades || nonBootstrapOpenTrade || nonBootstrapUserOpenTrade;
 }
 
 function coerceFiniteNumber(value, fallback, min = -Infinity, max = Infinity) {
@@ -332,7 +340,8 @@ function coerceFiniteNumber(value, fallback, min = -Infinity, max = Infinity) {
 function restoreClientSnapshot(snapshot = {}) {
   const backupTrades = normalizeTradeHistory(snapshot.trades);
   const backupOpenTrade = snapshot.openTrade ? normalizeTradeShape(snapshot.openTrade) : null;
-  if (!backupTrades.length && !backupOpenTrade) {
+  const backupUserOpenTrade = snapshot.userOpenTrade ? normalizeTradeShape(snapshot.userOpenTrade) : null;
+  if (!backupTrades.length && !backupOpenTrade && !backupUserOpenTrade) {
     return { restored: false, reason: "empty-client-backup" };
   }
   const serverResetAt = state.bot?.manualResetAt || null;
@@ -362,8 +371,9 @@ function restoreClientSnapshot(snapshot = {}) {
     ...fresh,
     account: restoredAccount,
     openTrade: backupOpenTrade,
+    userOpenTrade: backupUserOpenTrade,
     trades: backupTrades,
-    nextTradeSequence: getMaxTradeSequence([...backupTrades, backupOpenTrade].filter(Boolean)) + 1,
+    nextTradeSequence: getMaxTradeSequence([...backupTrades, backupOpenTrade, backupUserOpenTrade].filter(Boolean)) + 1,
     insights: Array.isArray(snapshot.insights) ? snapshot.insights.slice(0, 20) : [],
     userHabits: normalizeUserHabits(snapshot.userHabits),
   };
@@ -419,7 +429,7 @@ function mutateState(mutator) {
 function publicState() {
   const now = Date.now();
   const open = state.openTrade;
-  const nextSettlementTime = open?.settlementTime || state.bot.nextSettlementTime || state.bot.nextDecisionTime;
+  const nextSettlementTime = getNearestSettlementTime() || state.bot.nextSettlementTime || state.bot.nextDecisionTime;
   return {
     ...state,
     storage: {
@@ -429,6 +439,18 @@ function publicState() {
     serverTime: nowIso(),
     countdownMs: nextSettlementTime ? Math.max(0, new Date(nextSettlementTime).getTime() - now) : 0,
   };
+}
+
+function getOpenTrades() {
+  return [state.openTrade, state.userOpenTrade].filter(Boolean);
+}
+
+function getNearestSettlementTime() {
+  const times = getOpenTrades()
+    .map((trade) => trade.settlementTime)
+    .filter(Boolean)
+    .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+  return times[0] || null;
 }
 
 const BINANCE_NATIVE_INTERVALS = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"]);
@@ -788,7 +810,7 @@ async function refreshMarket(force = false) {
       });
     } catch (error) {
       mutateState(() => {
-        const keepResetPause = !state.bot.active && state.bot.manualResetAt && !state.trades.length && !state.openTrade;
+        const keepResetPause = !state.bot.active && state.bot.manualResetAt && !state.trades.length && !state.openTrade && !state.userOpenTrade;
         state.market.source = state.market.source === "none" ? "Binance disconnected" : state.market.source;
         if (keepResetPause) {
           state.bot.dataSource = state.market.candles.length ? `${state.market.source} 路 stale` : "Binance disconnected";
@@ -948,7 +970,8 @@ function latestTradablePrice() {
 
 function getLastEntryTimeMs(currentTime) {
   if (state.openTrade?.entryTime) return new Date(state.openTrade.entryTime).getTime();
-  if (state.trades[0]?.entryTime) return new Date(state.trades[0].entryTime).getTime();
+  const latestAiTrade = state.trades.find((trade) => trade.mode !== "user-manual");
+  if (latestAiTrade?.entryTime) return new Date(latestAiTrade.entryTime).getTime();
   return null;
 }
 
@@ -1137,14 +1160,18 @@ function openTrade(entryPrice, entryTime, signal, mode = "live", decision = {}) 
   };
 
   state.account.availableBalanceUsdt = round(state.account.availableBalanceUsdt - stakeUsdt, 4);
-  state.openTrade = trade;
-  state.bot.status = isUserManual ? "user-position-open" : mode === "live" ? "position-open" : "backfilling";
-  state.bot.lastDecisionAt = trade.entryTime;
-  state.bot.lastEvaluationAt = trade.entryTime;
-  state.bot.lastEvaluatedBucket = entryBucket;
-  state.bot.nextDecisionTime = trade.settlementTime;
-  state.bot.nextSettlementTime = trade.settlementTime;
-  state.bot.note = trade.preTradeNote;
+  if (isUserManual) {
+    state.userOpenTrade = trade;
+  } else {
+    state.openTrade = trade;
+    state.bot.status = mode === "live" ? "position-open" : "backfilling";
+    state.bot.lastDecisionAt = trade.entryTime;
+    state.bot.lastEvaluationAt = trade.entryTime;
+    state.bot.lastEvaluatedBucket = entryBucket;
+    state.bot.nextDecisionTime = trade.settlementTime;
+    state.bot.nextSettlementTime = trade.settlementTime;
+    state.bot.note = trade.preTradeNote;
+  }
   recalculateAccountExposure();
 
   return trade;
@@ -1179,8 +1206,8 @@ async function openUserManualTrade(body = {}) {
     throw new Error(`手动下单最低 ${CONFIG.minStakeUsdt} USDT。`);
   }
 
-  if (state.openTrade) {
-    throw new Error("当前已有未结算事件票据，等这一单结算后再手动下单。");
+  if (state.userOpenTrade) {
+    throw new Error("当前已有魏夙手动未结算事件票据，等这一单结算后再手动下单。");
   }
 
   if (stakeUsdt > state.account.availableBalanceUsdt) {
@@ -1215,8 +1242,8 @@ async function openUserManualTrade(body = {}) {
   return trade;
 }
 
-function settleTrade(exitPrice, exitTime) {
-  const trade = state.openTrade;
+function settleTrade(exitPrice, exitTime, slot = "ai") {
+  const trade = slot === "user" ? state.userOpenTrade : state.openTrade;
   if (!trade) return null;
 
   const isLong = trade.direction === "LONG";
@@ -1233,17 +1260,23 @@ function settleTrade(exitPrice, exitTime) {
   trade.pnlUsdt = round(pnlUsdt, 4);
   trade.pnlRmb = round(pnlUsdt * state.account.rmbPerUsdt, 2);
   trade.priceMovePct = round(priceMove, 3);
-  trade.summary = trade.mode === "user-manual" ? buildUserManualSummary(trade) : buildTradeSummaryV2(trade);
+  trade.summary = trade.mode === "user-manual" ? buildUserManualSummary(trade) : buildTradeSummaryV3(trade);
 
   state.account.availableBalanceUsdt = round(state.account.availableBalanceUsdt + returnedUsdt, 4);
   state.account.realizedPnlUsdt = round(state.account.realizedPnlUsdt + pnlUsdt, 4);
   state.account.realizedPnlRmb = round(state.account.realizedPnlUsdt * state.account.rmbPerUsdt, 2);
   if (trade.mode === "user-manual") updateUserHabits(trade);
-  state.openTrade = null;
+  if (slot === "user" || trade.mode === "user-manual") {
+    state.userOpenTrade = null;
+  } else {
+    state.openTrade = null;
+  }
   state.trades.unshift(trade);
   state.trades = state.trades.slice(0, CONFIG.maxTradeHistory);
-  state.bot.status = "waiting-next-cycle";
-  state.bot.note = trade.summary;
+  if (trade.mode !== "user-manual") {
+    state.bot.status = "waiting-next-cycle";
+    state.bot.note = trade.summary;
+  }
   state.insights.unshift({
     time: trade.exitTime,
     type: trade.result,
@@ -1256,6 +1289,23 @@ function settleTrade(exitPrice, exitTime) {
   recalculateAccountExposure();
 
   return trade;
+}
+
+function settleOpenTradeIfDue(slot, now) {
+  const trade = slot === "user" ? state.userOpenTrade : state.openTrade;
+  if (!trade || now < new Date(trade.settlementTime).getTime()) return "not-due";
+
+  const settlementCandle = findTradeSettlementCandle(trade);
+  if (!settlementCandle) {
+    if (slot !== "user") {
+      state.bot.status = "waiting-binance-close";
+      state.bot.note = "等待 Binance 返回订单到期后的真实1分钟收盘价。";
+    }
+    return "waiting";
+  }
+
+  settleTrade(settlementCandle.close, settlementCandle.closeTime, slot);
+  return "settled";
 }
 
 function buildTradeSummary(trade) {
@@ -1350,6 +1400,90 @@ function buildTradeSummaryV2(trade) {
       : Number(trade.volumeRatio || 0) < 1.05
         ? "下一轮低量能信号只保留样本，不再给加仓权重。"
         : "下一轮遇到突发反抽时，先等二次确认或更厚的合约流向再追。";
+    return `${durationText}${directionText}失败：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}，亏损 ${Math.abs(trade.pnlUsdt).toFixed(2)} USDT。市场上下文：${marketContext}。${entryLogic}。失败原因：${diagnosis}${nextAdjustment}`;
+  }
+
+  return `${durationText}${directionText}持平：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}。市场上下文：${marketContext}。${entryLogic}。本轮退回本金，说明事件窗口内没有形成足够价差；下一轮优先等更清晰的突破、放量或反转确认。`;
+}
+
+function buildTradeSummaryV3(trade) {
+  const directionText = trade.direction === "LONG" ? "买涨" : "买跌";
+  const durationText = `${trade.durationMinutes || 10}分钟`;
+  const moveText = `价格从 ${formatPrice(trade.entryPrice)} 到 ${formatPrice(trade.exitPrice)}，波动 ${trade.priceMovePct}%`;
+  const confidenceText = Number.isFinite(Number(trade.confidence))
+    ? `入场置信度 ${Math.round(Number(trade.confidence) * 100)}%`
+    : "入场置信度未记录";
+  const strengthText = Number.isFinite(Number(trade.score))
+    ? `信号强度 ${Math.abs(Number(trade.score)).toFixed(2)}`
+    : "信号强度未记录";
+  const triggerText = trade.trigger ? `触发来源：${trade.trigger}` : "触发来源：事件信号";
+  const durationReason = trade.durationReason || "周期按事件合约短线风险控制选择";
+  const signalReason = trade.signalReason || "入场时的结构信号未完整落档";
+  const volumeRatio = Number(trade.volumeRatio || 0);
+  const volumeText = Number.isFinite(Number(trade.volumeRatio))
+    ? `量能 ${Number(trade.volumeRatio).toFixed(2)}x`
+    : "量能未记录";
+  const momentum3 = Number(trade.momentum3 || 0);
+  const momentumText = Number.isFinite(Number(trade.momentum3))
+    ? `3根动量 ${round(Number(trade.momentum3) * 100, 2)}%`
+    : "3根动量未记录";
+  const rsi = Number(trade.rsi || 50);
+  const rsiText = Number.isFinite(Number(trade.rsi)) ? `RSI ${Number(trade.rsi).toFixed(1)}` : "RSI 未记录";
+  const numericMovePct = Number(trade.priceMovePct || 0);
+  const absMovePct = Math.abs(numericMovePct);
+  const score = Number(trade.score || 0);
+  const overextendedLong = trade.direction === "LONG" && rsi >= 68;
+  const overextendedShort = trade.direction === "SHORT" && rsi <= 32;
+  const settlementWindowText = absMovePct >= 0.12
+    ? "到期窗口兑现充分"
+    : absMovePct >= 0.06
+      ? "到期窗口兑现一般"
+      : "到期窗口兑现偏弱";
+  const marketContext = [
+    absMovePct < 0.03 ? "到期前市场几乎没有拉开价差" : "到期前市场出现了可交易的方向波动",
+    volumeRatio >= 1.2 ? "量能明显放大" : volumeRatio >= 1.05 ? "量能有轻度确认" : "量能偏薄",
+    Math.abs(momentum3) >= 0.0015 ? "短周期动量较强" : Math.abs(momentum3) >= 0.0007 ? "短周期动量一般" : "短周期动量不足",
+    settlementWindowText,
+  ].join("，");
+  const entryLogic = `入场逻辑：${signalReason}；${triggerText}；${confidenceText}；${strengthText}；${volumeText}；${momentumText}；${rsiText}；周期理由：${durationReason}`;
+
+  if (trade.result === "WIN") {
+    const lesson = absMovePct < 0.08
+      ? "这笔胜利更像薄边际兑现，方向虽然站对，但优势并不厚。"
+      : trade.durationMinutes === 15
+        ? "这笔胜利说明结构、延续和持有窗口都匹配，15分钟事件单才有兑现基础。"
+        : "这笔胜利说明入场后的方向延续覆盖了10分钟到期窗口。";
+    const nextStep = volumeRatio < 1.05
+      ? "下一轮同类低量能样本继续只给最小仓位，不把薄胜误判成可放大的稳定优势。"
+      : overextendedLong || overextendedShort
+        ? "下一轮即使延续成功，也不要把过热追单当成常态模板；先等回踩或二次确认。"
+        : "下一轮继续要求量能和动量同向，不因单笔盈利扩大风险。";
+    return `${durationText}${directionText}成功：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}，净收益 ${trade.pnlUsdt.toFixed(2)} USDT。市场上下文：${marketContext}。${entryLogic}。成功原因：${lesson}${nextStep}`;
+  }
+
+  if (trade.result === "LOSS") {
+    const againstDirection = trade.direction === "LONG" ? numericMovePct < 0 : numericMovePct > 0;
+    let diagnosis = "失败原因仍需继续从信号源拆解。";
+    if (absMovePct < 0.06) {
+      diagnosis = "到期价差太窄，属于方向可能没错但赔率空间不够的事件合约失败。";
+    } else if (volumeRatio < 1.05 && Math.abs(momentum3) < 0.0009) {
+      diagnosis = "入场时量能和短动量都偏薄，更像在噪音里提前下注，而不是等到事件窗口真正打开。";
+    } else if (overextendedLong || overextendedShort) {
+      diagnosis = `入场时 RSI 已经${overextendedLong ? "偏高" : "偏低"}，更像末端追击，随后被均值回拉打掉。`;
+    } else if (againstDirection) {
+      diagnosis = "入场后出现反向推进，说明触发点没有拿到后续资金流确认，属于反抽打穿。";
+    } else {
+      diagnosis = "方向并非完全错误，但到期点没有站到有利一侧，时间窗或入场点仍偏早。";
+    }
+    const nextAdjustment = absMovePct < 0.06
+      ? "下一轮把这类窄幅样本改成影子观察，等量能、盘口或动量更厚再下单。"
+      : volumeRatio < 1.05
+        ? "下一轮低量能信号只保留样本，不再给真实模拟仓位优先级。"
+        : overextendedLong || overextendedShort
+          ? `下一轮把这类 RSI ${overextendedLong ? "过热追多" : "过冷追空"} 降级为等待二次确认，不再直接成交。`
+          : score && Math.abs(score) < 0.58
+            ? "下一轮同类刚过线信号降级为影子观察，等更厚的结构确认。"
+            : "下一轮遇到突发反抽时，先等二次确认或更厚的合约流向再进。";
     return `${durationText}${directionText}失败：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}，亏损 ${Math.abs(trade.pnlUsdt).toFixed(2)} USDT。市场上下文：${marketContext}。${entryLogic}。失败原因：${diagnosis}${nextAdjustment}`;
   }
 
@@ -1456,7 +1590,9 @@ function updateUserHabits(trade) {
 }
 
 function recalculateAccountExposure() {
-  const openExposure = state.openTrade ? state.openTrade.stakeUsdt : 0;
+  const aiOpenExposure = state.openTrade?.stakeUsdt || 0;
+  const manualOpenExposure = state.userOpenTrade?.stakeUsdt || 0;
+  const openExposure = aiOpenExposure + manualOpenExposure;
   state.account.openExposureUsdt = round(openExposure, 4);
   state.account.equityUsdt = round(state.account.availableBalanceUsdt + openExposure, 4);
   state.account.highWaterUsdt = Math.max(state.account.highWaterUsdt || state.account.equityUsdt, state.account.equityUsdt);
@@ -1480,8 +1616,9 @@ function recalculateStats() {
   }
 
   recalculateAccountExposure();
+  const openTradeCount = getOpenTrades().length;
   state.stats = {
-    totalTrades: settled.length + (state.openTrade ? 1 : 0),
+    totalTrades: settled.length + openTradeCount,
     settledTrades: settled.length,
     wins,
     losses,
@@ -1493,7 +1630,7 @@ function recalculateStats() {
 }
 
 async function bootstrapHistoricalTrades() {
-  if (state.trades.length > 0 || state.openTrade) return;
+  if (state.trades.length > 0 || state.openTrade || state.userOpenTrade) return;
   if (!state.bot.active && state.bot.manualResetAt) return;
   if (state.bot.status === "paused-after-reset") return;
 
@@ -1534,16 +1671,9 @@ async function botTick() {
     mutateState(() => {
       const currentBucket = bucketOf(now);
 
-      if (state.openTrade && now >= new Date(state.openTrade.settlementTime).getTime()) {
-        const settlementCandle = findTradeSettlementCandle(state.openTrade);
-        if (settlementCandle) {
-          settleTrade(settlementCandle.close, settlementCandle.closeTime);
-        } else {
-          state.bot.status = "waiting-binance-close";
-          state.bot.note = "等待 Binance 返回订单到期后的真实1分钟收盘价。";
-          return;
-        }
-      }
+      const aiSettlementStatus = settleOpenTradeIfDue("ai", now);
+      settleOpenTradeIfDue("user", now);
+      if (aiSettlementStatus === "waiting") return;
 
       if (!state.bot.active) {
         if (state.openTrade) return;
@@ -1601,12 +1731,8 @@ async function manualAdvance() {
   mutateState(() => {
     const now = Date.now();
     const currentBucket = bucketOf(now);
-    if (state.openTrade && now >= new Date(state.openTrade.settlementTime).getTime()) {
-      const settlementCandle = findTradeSettlementCandle(state.openTrade);
-      if (settlementCandle) {
-        settleTrade(settlementCandle.close, settlementCandle.closeTime);
-      }
-    }
+    settleOpenTradeIfDue("ai", now);
+    settleOpenTradeIfDue("user", now);
     if (state.bot.active && !state.openTrade && state.account.availableBalanceUsdt >= CONFIG.minStakeUsdt) {
       const signalCandles = state.market.baseCandles?.length ? state.market.baseCandles : state.market.candles;
       const signal = buildSignal(signalCandles);
