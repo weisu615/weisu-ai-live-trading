@@ -432,6 +432,9 @@ function publicState() {
   const nextSettlementTime = getNearestSettlementTime() || state.bot.nextSettlementTime || state.bot.nextDecisionTime;
   return {
     ...state,
+    sentimentCloud: buildSentimentCloud(),
+    strategyLab: buildStrategyLab(),
+    manualHabitProfile: buildManualHabitProfile(),
     storage: {
       provider: hasSupabaseStateStorage() ? "supabase" : "local-file",
       stateId: hasSupabaseStateStorage() ? SUPABASE_STATE_ID : null,
@@ -451,6 +454,220 @@ function getNearestSettlementTime() {
     .filter(Boolean)
     .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
   return times[0] || null;
+}
+
+function latestSignalSnapshot() {
+  const candles = state.market.baseCandles?.length ? state.market.baseCandles : state.market.candles;
+  return candles?.length ? buildSignal(candles) : null;
+}
+
+function buildSentimentCloud() {
+  const candles = (state.market.baseCandles?.length ? state.market.baseCandles : state.market.candles || [])
+    .filter((candle) => Number.isFinite(Number(candle.close)));
+  const latest = candles[candles.length - 1] || null;
+  const recent = candles.slice(-8);
+  const firstRecent = recent[0] || latest;
+  const signal = latestSignalSnapshot();
+  const currentPrice = Number(latest?.close || state.market.currentPrice || 0);
+  const recentMovePct = firstRecent?.close
+    ? round(((currentPrice - firstRecent.close) / firstRecent.close) * 100, 3)
+    : 0;
+  const volumes = candles.slice(-24).map((candle) => Number(candle.volume || 0));
+  const recentVolume = volumes.slice(-4).reduce((sum, value) => sum + value, 0);
+  const baselineVolume = Math.max(1, volumes.slice(-16, -4).reduce((sum, value) => sum + value, 0) / 3);
+  const volumePulse = round(recentVolume / baselineVolume, 2);
+  const longEdge = signal?.direction === "LONG"
+    ? Number(signal.confidence || 0.5)
+    : 1 - Number(signal?.confidence || 0.5);
+  const shortEdge = 1 - longEdge;
+  const eventEdge = Math.max(longEdge, shortEdge);
+
+  return {
+    updatedAt: state.market.refreshedAt || nowIso(),
+    source: state.market.source || "waiting",
+    items: [
+      {
+        key: "price-momentum",
+        label: "价格动量",
+        value: `${recentMovePct >= 0 ? "+" : ""}${recentMovePct.toFixed(3)}%`,
+        tone: recentMovePct > 0.08 ? "bull" : recentMovePct < -0.08 ? "bear" : "flat",
+        detail: recentMovePct > 0 ? "短线多头推进" : recentMovePct < 0 ? "短线空头推进" : "窄幅震荡",
+        intensity: Math.min(100, Math.round(Math.abs(recentMovePct) * 280)),
+      },
+      {
+        key: "volume-pulse",
+        label: "成交突变",
+        value: `${volumePulse.toFixed(2)}x`,
+        tone: volumePulse >= 1.2 ? "hot" : volumePulse >= 1.05 ? "warm" : "flat",
+        detail: volumePulse >= 1.05 ? "量能开始给事件窗口确认" : "量能仍偏薄",
+        intensity: Math.min(100, Math.round(volumePulse * 45)),
+      },
+      {
+        key: "event-edge",
+        label: "10m/15m 胜率边际",
+        value: `${Math.round(eventEdge * 100)}%`,
+        tone: eventEdge >= 0.66 ? "hot" : eventEdge >= 0.58 ? "warm" : "flat",
+        detail: signal ? `${signal.direction === "LONG" ? "买涨" : "买跌"}影子估算` : "等待信号样本",
+        intensity: Math.round(eventEdge * 100),
+      },
+      {
+        key: "contract-flow",
+        label: "事件票流",
+        value: getOpenTrades().length ? "LIVE" : "WAIT",
+        tone: getOpenTrades().length ? "hot" : "flat",
+        detail: getOpenTrades().length ? "已有未结算模拟票据" : "无未结算票据",
+        intensity: getOpenTrades().length ? 88 : 34,
+      },
+      {
+        key: "oi",
+        label: "持仓量 OI",
+        value: "待接入",
+        tone: "muted",
+        detail: "后续接入多源行情，不用假数据",
+        intensity: 18,
+      },
+      {
+        key: "long-short",
+        label: "多空账户比例",
+        value: "待接入",
+        tone: "muted",
+        detail: "预留 TradingView/多源情绪接口",
+        intensity: 18,
+      },
+    ],
+  };
+}
+
+function buildStrategyLab() {
+  const settled = state.trades.filter((trade) => trade.status === "SETTLED");
+  const manualSettled = settled.filter((trade) => trade.mode === "user-manual" || trade.userManual);
+  const signal = latestSignalSnapshot();
+  const liveScore = signal ? Math.round(Math.min(99, Math.max(1, Math.abs(Number(signal.score || 0)) * 100))) : 0;
+  const weakSignal = signal ? Math.abs(Number(signal.score || 0)) < 0.45 || Number(signal.confidence || 0) < 0.62 : true;
+  const candidates = [
+    createStrategyCandidate({
+      key: "trend-10m",
+      name: "趋势延续 10m",
+      settled,
+      matcher: (trade) => trade.durationMinutes === 10 && Math.abs(Number(trade.score || 0)) >= 0.45,
+      liveScore,
+      lesson: "只在短均线、动量和事件窗口同步时进场，薄边际继续观察。",
+    }),
+    createStrategyCandidate({
+      key: "volume-15m",
+      name: "放量延续 15m",
+      settled,
+      matcher: (trade) => trade.durationMinutes === 15 && Number(trade.volumeRatio || 0) >= 1.05,
+      liveScore: signal ? Math.round(Math.min(99, Number(signal.volumeRatio || 1) * 48)) : 0,
+      lesson: "15m 只给量能确认后的延续单，不把普通波动硬拉长。",
+    }),
+    createStrategyCandidate({
+      key: "overheat-filter",
+      name: "过热反转过滤",
+      settled,
+      matcher: (trade) => Number(trade.rsi || 50) >= 68 || Number(trade.rsi || 50) <= 32,
+      liveScore: signal ? Math.round(Math.min(99, Math.abs(Number(signal.rsi || 50) - 50) * 2)) : 0,
+      lesson: "RSI 末端追单降级为二次确认，防止事件到期点被回拉。",
+    }),
+    createStrategyCandidate({
+      key: "weisu-manual",
+      name: "魏夙手动共振",
+      settled: manualSettled,
+      matcher: () => true,
+      liveScore: Math.round(Number(state.userHabits?.winRate || 0)),
+      lesson: state.userHabits?.lastLesson || "等待更多魏夙手动样本建立习惯画像。",
+    }),
+    createStrategyCandidate({
+      key: "no-trade-discipline",
+      name: "窄幅禁入纪律",
+      settled,
+      matcher: (trade) => Math.abs(Number(trade.priceMovePct || 0)) < 0.06,
+      liveScore: weakSignal ? 82 : 38,
+      lesson: "信号弱、量能薄、价差窄时，最好的交易是不下注。",
+    }),
+  ]
+    .sort((a, b) => (
+      b.winRate - a.winRate ||
+      b.executions - a.executions ||
+      b.liveScore - a.liveScore
+    ))
+    .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+
+  return {
+    updatedAt: nowIso(),
+    shadowOnly: true,
+    basis: `${settled.length} 笔已结算模拟单 + 当前盘面影子观察`,
+    candidates,
+  };
+}
+
+function createStrategyCandidate({ key, name, settled, matcher, liveScore, lesson }) {
+  const samples = settled.filter(matcher);
+  const wins = samples.filter((trade) => trade.result === "WIN").length;
+  const losses = samples.filter((trade) => trade.result === "LOSS").length;
+  const flats = samples.filter((trade) => trade.result === "FLAT").length;
+  const executions = samples.length;
+  const experiments = executions + (liveScore >= 60 ? 1 : 0);
+  const winRate = executions ? round((wins / executions) * 100, 1) : 0;
+
+  return {
+    key,
+    name,
+    shadowOnly: true,
+    winRate,
+    experiments,
+    executions,
+    wins,
+    losses,
+    flats,
+    liveScore,
+    status: liveScore >= 70 ? "热区观察" : liveScore >= 45 ? "等待确认" : "低优先级",
+    lesson,
+  };
+}
+
+function buildManualHabitProfile() {
+  const habits = state.userHabits || createInitialUserHabits();
+  const manualTrades = state.trades
+    .filter((trade) => trade.mode === "user-manual" || trade.userManual)
+    .slice(0, CONFIG.maxTradeHistory);
+  const latest = manualTrades[0] || null;
+  const losses = manualTrades.filter((trade) => trade.result === "LOSS").length;
+  const wins = manualTrades.filter((trade) => trade.result === "WIN").length;
+  const avgStake = Number(habits.avgStakeUsdt || 0);
+  const total = Number(habits.totalTrades || 0);
+  const bias = Number(habits.longTrades || 0) > Number(habits.shortTrades || 0)
+    ? "偏买涨"
+    : Number(habits.shortTrades || 0) > Number(habits.longTrades || 0)
+      ? "偏买跌"
+      : total ? "多空均衡" : "样本不足";
+  const discipline = total < 5
+    ? "样本还少，先记录你的真实判断，不急着下定论。"
+    : Number(habits.winRate || 0) >= 55
+      ? "你的手动判断暂时有正反馈，后续重点看是否能稳定跨周期。"
+      : "你的手动判断需要降低冲动单，把低量能和窄幅盘面降级为观察。";
+
+  return {
+    updatedAt: nowIso(),
+    totalTrades: total,
+    winRate: Number(habits.winRate || 0),
+    wins,
+    losses,
+    bias,
+    avgStakeUsdt: avgStake,
+    preferredDuration: habits.preferredDuration || "--",
+    lastLesson: habits.lastLesson || "还没有魏夙手动单样本。",
+    discipline,
+    latest: latest ? {
+      sequence: latest.sequence,
+      result: latest.result,
+      direction: latest.direction,
+      durationMinutes: latest.durationMinutes,
+      stakeUsdt: latest.stakeUsdt,
+      summary: latest.summary || latest.preTradeNote,
+    } : null,
+    patterns: (habits.patterns || []).slice(0, 6),
+  };
 }
 
 const BINANCE_NATIVE_INTERVALS = new Set(["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d", "3d", "1w", "1M"]);

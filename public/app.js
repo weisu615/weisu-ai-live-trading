@@ -39,12 +39,17 @@ const els = {
   eventEdge: document.getElementById("eventEdge"),
   eventSettle: document.getElementById("eventSettle"),
   manualStake: document.getElementById("manualStake"),
+  manualStakeEcho: document.getElementById("manualStakeEcho"),
   manualDuration: document.getElementById("manualDuration"),
   manualStatus: document.getElementById("manualStatus"),
   manualButtons: document.querySelectorAll("[data-manual-direction]"),
+  stakePresetButtons: document.querySelectorAll("[data-stake-preset]"),
   userHabitWinRate: document.getElementById("userHabitWinRate"),
   userHabitSamples: document.getElementById("userHabitSamples"),
   userHabitBias: document.getElementById("userHabitBias"),
+  sentimentCloud: document.getElementById("sentimentCloud"),
+  strategyLabRows: document.getElementById("strategyLabRows"),
+  manualHabitProfile: document.getElementById("manualHabitProfile"),
   positionTitle: document.getElementById("positionTitle"),
   positionDirection: document.getElementById("positionDirection"),
   entryPrice: document.getElementById("entryPrice"),
@@ -193,7 +198,50 @@ function resultText(result) {
 }
 
 function setText(el, value) {
+  if (!el) return;
   el.textContent = value;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function clampStakeAmount(value, state = latestState) {
+  const minStake = Number(state?.config?.minStakeUsdt || 5);
+  const balance = Number(state?.account?.availableBalanceUsdt || 0);
+  const numeric = Number(value);
+  const safeValue = Number.isFinite(numeric) ? numeric : minStake;
+  if (balance >= minStake) return Math.max(minStake, Math.min(safeValue, balance));
+  return minStake;
+}
+
+function updateManualStakeEcho() {
+  const value = clampStakeAmount(Number(els.manualStake?.value || 0));
+  setText(els.manualStakeEcho, fmtUsdt(value));
+}
+
+function applyStakePreset(preset) {
+  if (!els.manualStake) return;
+  const minStake = Number(latestState?.config?.minStakeUsdt || 5);
+  const balance = Number(latestState?.account?.availableBalanceUsdt || minStake);
+  let amount = minStake;
+
+  if (preset === "max") {
+    amount = balance;
+  } else if (String(preset).endsWith("pct")) {
+    const pct = Number.parseFloat(String(preset).replace("pct", ""));
+    amount = balance * (Number.isFinite(pct) ? pct / 100 : 0);
+  } else {
+    amount = Number(preset || minStake);
+  }
+
+  els.manualStake.value = clampStakeAmount(amount).toFixed(2);
+  updateManualStakeEcho();
 }
 
 function eventOddsText(state, open) {
@@ -313,17 +361,16 @@ function updateManualOrderPanel(state) {
 
   els.manualStake.min = String(minStake);
   els.manualStake.max = String(Math.max(minStake, balance).toFixed(2));
-  if (!els.manualStake.value || Number(els.manualStake.value) < minStake) {
-    els.manualStake.value = minStake.toFixed(2);
-  }
-  if (Number(els.manualStake.value) > balance && balance >= minStake) {
-    els.manualStake.value = balance.toFixed(2);
-  }
+  els.manualStake.value = clampStakeAmount(els.manualStake.value, state).toFixed(2);
+  updateManualStakeEcho();
 
   els.manualButtons.forEach((button) => {
     button.disabled = disabled;
   });
-  els.manualStake.disabled = disabled && balance < minStake;
+  els.stakePresetButtons.forEach((button) => {
+    button.disabled = Boolean(userOpen) || balance < minStake;
+  });
+  els.manualStake.disabled = Boolean(userOpen) || balance < minStake;
   els.manualDuration.disabled = Boolean(userOpen);
 
   setText(els.userHabitWinRate, `${Number(habits.winRate || 0).toFixed(1)}%`);
@@ -339,6 +386,92 @@ function updateManualOrderPanel(state) {
   } else {
     setText(els.manualStatus, habits.lastLesson || "手动单会进入同一个模拟账户，结算后单独复盘你的判断习惯。");
   }
+}
+
+function updateSentimentCloud(state) {
+  const items = state.sentimentCloud?.items || [];
+  if (!els.sentimentCloud) return;
+  if (!items.length) {
+    els.sentimentCloud.innerHTML = `<div class="sentiment-empty">等待 Binance 永续行情</div>`;
+    return;
+  }
+
+  els.sentimentCloud.innerHTML = items.map((item) => {
+    const tone = String(item.tone || "flat").replace(/[^a-z0-9-]/gi, "");
+    const intensity = Math.max(0, Math.min(100, Number(item.intensity || 0)));
+    return `
+      <article class="sentiment-tile tone-${tone}" style="--intensity: ${intensity}%">
+        <span>${escapeHtml(item.label)}</span>
+        <strong>${escapeHtml(item.value)}</strong>
+        <small>${escapeHtml(item.detail)}</small>
+      </article>
+    `;
+  }).join("");
+}
+
+function updateStrategyLab(state) {
+  const lab = state.strategyLab || {};
+  const rows = lab.candidates || [];
+  if (!els.strategyLabRows) return;
+  if (!rows.length) {
+    els.strategyLabRows.innerHTML = `<div class="strategy-empty">等待模拟样本沉淀</div>`;
+    return;
+  }
+
+  els.strategyLabRows.innerHTML = rows.map((row) => {
+    const liveScore = Math.max(0, Math.min(99, Number(row.liveScore || 0)));
+    return `
+      <article class="strategy-row">
+        <div class="strategy-rank">#${escapeHtml(row.rank)}</div>
+        <div class="strategy-main">
+          <div class="strategy-title">
+            <strong>${escapeHtml(row.name)}</strong>
+            <span>${escapeHtml(row.status)}</span>
+          </div>
+          <div class="strategy-meter" aria-label="当前盘面热度">
+            <i style="width: ${liveScore}%"></i>
+          </div>
+          <p>${escapeHtml(row.lesson)}</p>
+        </div>
+        <div class="strategy-score">
+          <strong>${Number(row.winRate || 0).toFixed(1)}%</strong>
+          <span>胜率</span>
+          <small>${Number(row.experiments || 0)} 实验 / ${Number(row.executions || 0)} 实操</small>
+        </div>
+      </article>
+    `;
+  }).join("");
+}
+
+function updateManualHabitProfile(state) {
+  const profile = state.manualHabitProfile || {};
+  if (!els.manualHabitProfile) return;
+  const cards = [
+    ["手动胜率", `${Number(profile.winRate || 0).toFixed(1)}%`, `${Number(profile.wins || 0)}胜 / ${Number(profile.losses || 0)}负`],
+    ["判断偏好", profile.bias || "--", `${Number(profile.totalTrades || 0)} 笔样本`],
+    ["常用周期", profile.preferredDuration || "--", `均投 ${fmtUsdt(profile.avgStakeUsdt || 0)}`],
+  ];
+  const latest = profile.latest
+    ? `最近 #${profile.latest.sequence || "--"} ${directionText(profile.latest.direction)} ${profile.latest.durationMinutes || 10}m，${resultText(profile.latest.result)}。`
+    : "最近还没有手动结算样本。";
+
+  els.manualHabitProfile.innerHTML = `
+    <div class="manual-profile-cards">
+      ${cards.map(([label, value, detail]) => `
+        <article>
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+          <small>${escapeHtml(detail)}</small>
+        </article>
+      `).join("")}
+    </div>
+    <div class="manual-profile-lesson">
+      <span>AI 画像判断</span>
+      <strong>${escapeHtml(profile.discipline || "等待更多手动样本。")}</strong>
+      <p>${escapeHtml(profile.lastLesson || "还没有魏夙手动单样本。")}</p>
+      <small>${escapeHtml(latest)}</small>
+    </div>
+  `;
 }
 
 function durableTrades(state) {
@@ -445,6 +578,9 @@ function updateState(state) {
   updateTickerTape(state, priceChange);
   updateContractBoard(state, open);
   updateManualOrderPanel(state);
+  updateSentimentCloud(state);
+  updateStrategyLab(state);
+  updateManualHabitProfile(state);
 
   setText(els.positionTitle, open ? `${open.signalLabel} · ${directionText(open.direction)}` : "等待信号");
   setText(els.positionDirection, open ? directionText(open.direction) : "--");
@@ -1000,6 +1136,14 @@ els.manualButtons.forEach((button) => {
     submitManualOrder(button.dataset.manualDirection);
   });
 });
+
+els.stakePresetButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    applyStakePreset(button.dataset.stakePreset);
+  });
+});
+
+els.manualStake.addEventListener("input", updateManualStakeEcho);
 
 function openResetConfirm() {
   els.resetConfirm.hidden = false;

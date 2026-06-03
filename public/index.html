@@ -189,17 +189,29 @@
                 <button class="manual-order-button short" data-manual-direction="SHORT" type="button">买跌</button>
               </div>
               <div class="manual-settings">
-                <label>
+                <label class="manual-duration-ticket">
                   周期
                   <select id="manualDuration">
                     <option value="10">10m</option>
                     <option value="15">15m</option>
                   </select>
                 </label>
-                <label>
-                  投入
-                  <input id="manualStake" type="number" min="5" step="0.1" value="5" />
-                </label>
+                <div class="manual-stake-ticket">
+                  <div class="manual-stake-topline">
+                    <span>手动投入</span>
+                    <strong id="manualStakeEcho">5.00 USDT</strong>
+                  </div>
+                  <label>
+                    <span>输入金额 USDT</span>
+                    <input id="manualStake" type="number" min="5" step="0.1" inputmode="decimal" value="5" />
+                  </label>
+                  <div class="stake-presets" aria-label="快捷投入金额">
+                    <button type="button" data-stake-preset="5">5U</button>
+                    <button type="button" data-stake-preset="25pct">25%</button>
+                    <button type="button" data-stake-preset="50pct">50%</button>
+                    <button type="button" data-stake-preset="max">MAX</button>
+                  </div>
+                </div>
               </div>
               <div class="habit-grid">
                 <div>
@@ -248,6 +260,45 @@
             </div>
           </div>
         </aside>
+      </section>
+
+      <section class="intelligence-grid" aria-label="策略实验室与情绪云图">
+        <section class="intelligence-panel sentiment-desk">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">WeiSu Sentiment Cloud</span>
+              <h2>魏夙情绪云图</h2>
+            </div>
+            <span class="status-pill subtle">多源预留 · 不造假数据</span>
+          </div>
+          <div class="sentiment-cloud" id="sentimentCloud">
+            <div class="sentiment-empty">等待 Binance 永续行情</div>
+          </div>
+        </section>
+
+        <section class="intelligence-panel strategy-lab-panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Shadow Strategy Lab</span>
+              <h2>策略实验室</h2>
+            </div>
+            <span class="status-pill subtle">影子排行 · 暂不控单</span>
+          </div>
+          <div class="strategy-lab-rows" id="strategyLabRows"></div>
+        </section>
+
+        <section class="intelligence-panel manual-profile-panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">WeiSu Manual Profile</span>
+              <h2>魏夙手动画像</h2>
+            </div>
+            <span class="status-pill subtle">AI 只复盘 · 不覆盖你的单</span>
+          </div>
+          <div class="manual-habit-profile" id="manualHabitProfile">
+            <div class="strategy-empty">等待你的手动样本</div>
+          </div>
+        </section>
       </section>
 
       <section class="ledger-grid" aria-label="订单与复盘">
