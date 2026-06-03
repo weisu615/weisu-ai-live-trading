@@ -179,6 +179,40 @@
                 <dd id="eventSettle">--</dd>
               </div>
             </dl>
+            <div class="manual-order-panel" aria-label="魏夙手动事件合约">
+              <div class="manual-head">
+                <span>魏夙手动下单</span>
+                <strong id="userHabitWinRate">--</strong>
+              </div>
+              <div class="manual-actions">
+                <button class="manual-order-button long" data-manual-direction="LONG" type="button">买涨</button>
+                <button class="manual-order-button short" data-manual-direction="SHORT" type="button">买跌</button>
+              </div>
+              <div class="manual-settings">
+                <label>
+                  周期
+                  <select id="manualDuration">
+                    <option value="10">10m</option>
+                    <option value="15">15m</option>
+                  </select>
+                </label>
+                <label>
+                  投入
+                  <input id="manualStake" type="number" min="5" step="0.1" value="5" />
+                </label>
+              </div>
+              <div class="habit-grid">
+                <div>
+                  <span>样本</span>
+                  <strong id="userHabitSamples">0</strong>
+                </div>
+                <div>
+                  <span>偏好</span>
+                  <strong id="userHabitBias">--</strong>
+                </div>
+              </div>
+              <p id="manualStatus">手动单会进入同一个模拟账户，结算后单独复盘你的判断习惯。</p>
+            </div>
           </div>
           <dl class="position-list">
             <div>
@@ -232,6 +266,7 @@
                 <th>下单时间</th>
                 <th>周期</th>
                 <th>方向</th>
+                <th>来源</th>
                 <th>金额</th>
                 <th>买入点位</th>
                 <th>卖出点位</th>
@@ -246,6 +281,18 @@
         </div>
       </section>
     </main>
+
+    <div class="modal-backdrop" id="resetConfirm" hidden>
+      <section class="reset-modal" role="dialog" aria-modal="true" aria-labelledby="resetConfirmTitle">
+        <span class="modal-kicker">DANGER CONTROL</span>
+        <h2 id="resetConfirmTitle">确认重置模拟盘？</h2>
+        <p>这会清空账户收益、历史订单、复盘记录和当前持仓。确认后自动化会暂停，不会立刻下单；需要你手动点播放恢复扫描。</p>
+        <div class="modal-actions">
+          <button class="ghost-button" id="cancelReset" type="button">取消</button>
+          <button class="danger-button" id="confirmReset" type="button">确认重置并暂停</button>
+        </div>
+      </section>
+    </div>
 
     <script src="/app.js"></script>
   </body>

@@ -4,6 +4,9 @@ const els = {
   toggleBot: document.getElementById("toggleBot"),
   advanceBot: document.getElementById("advanceBot"),
   resetBot: document.getElementById("resetBot"),
+  resetConfirm: document.getElementById("resetConfirm"),
+  cancelReset: document.getElementById("cancelReset"),
+  confirmReset: document.getElementById("confirmReset"),
   balanceRmb: document.getElementById("balanceRmb"),
   balanceUsdt: document.getElementById("balanceUsdt"),
   pnlRmb: document.getElementById("pnlRmb"),
@@ -35,6 +38,13 @@ const els = {
   eventStake: document.getElementById("eventStake"),
   eventEdge: document.getElementById("eventEdge"),
   eventSettle: document.getElementById("eventSettle"),
+  manualStake: document.getElementById("manualStake"),
+  manualDuration: document.getElementById("manualDuration"),
+  manualStatus: document.getElementById("manualStatus"),
+  manualButtons: document.querySelectorAll("[data-manual-direction]"),
+  userHabitWinRate: document.getElementById("userHabitWinRate"),
+  userHabitSamples: document.getElementById("userHabitSamples"),
+  userHabitBias: document.getElementById("userHabitBias"),
   positionTitle: document.getElementById("positionTitle"),
   positionDirection: document.getElementById("positionDirection"),
   entryPrice: document.getElementById("entryPrice"),
@@ -137,6 +147,20 @@ function formatCountdown(ms) {
 
 function directionText(direction) {
   return direction === "LONG" ? "买涨" : direction === "SHORT" ? "买跌" : "--";
+}
+
+function actorText(trade) {
+  if (trade?.mode === "user-manual" || trade?.userManual) return "魏夙手动";
+  if (trade?.mode === "historical") return "历史回放";
+  return "AI 自动";
+}
+
+function userHabitBiasText(habits = {}) {
+  const longTrades = Number(habits.longTrades || 0);
+  const shortTrades = Number(habits.shortTrades || 0);
+  if (!longTrades && !shortTrades) return "--";
+  if (longTrades === shortTrades) return "多空均衡";
+  return longTrades > shortTrades ? `偏买涨 ${longTrades}:${shortTrades}` : `偏买跌 ${shortTrades}:${longTrades}`;
 }
 
 function compactStakeText(value) {
@@ -278,6 +302,44 @@ function updateContractBoard(state, open) {
   els.putEdgeBar.parentElement.classList.toggle("hot", activeShort);
 }
 
+function updateManualOrderPanel(state) {
+  const habits = state.userHabits || {};
+  const minStake = Number(state.config?.minStakeUsdt || 5);
+  const balance = Number(state.account?.availableBalanceUsdt || 0);
+  const hasPrice = Number(state.market?.currentPrice || 0) > 0;
+  const hasOpenTrade = Boolean(state.openTrade);
+  const disabled = hasOpenTrade || balance < minStake || !hasPrice;
+
+  els.manualStake.min = String(minStake);
+  els.manualStake.max = String(Math.max(minStake, balance).toFixed(2));
+  if (!els.manualStake.value || Number(els.manualStake.value) < minStake) {
+    els.manualStake.value = minStake.toFixed(2);
+  }
+  if (Number(els.manualStake.value) > balance && balance >= minStake) {
+    els.manualStake.value = balance.toFixed(2);
+  }
+
+  els.manualButtons.forEach((button) => {
+    button.disabled = disabled;
+  });
+  els.manualStake.disabled = disabled && balance < minStake;
+  els.manualDuration.disabled = disabled && hasOpenTrade;
+
+  setText(els.userHabitWinRate, `${Number(habits.winRate || 0).toFixed(1)}%`);
+  setText(els.userHabitSamples, `${habits.totalTrades || 0} 笔`);
+  setText(els.userHabitBias, userHabitBiasText(habits));
+
+  if (hasOpenTrade) {
+    setText(els.manualStatus, "当前已有未结算票据，等结算后再手动参与。");
+  } else if (balance < minStake) {
+    setText(els.manualStatus, `可用余额低于 ${minStake.toFixed(2)} USDT，暂不能手动下单。`);
+  } else if (!hasPrice) {
+    setText(els.manualStatus, "等待 Binance 永续行情价，拿到真实入场价后才能手动下单。");
+  } else {
+    setText(els.manualStatus, habits.lastLesson || "手动单会进入同一个模拟账户，结算后单独复盘你的判断习惯。");
+  }
+}
+
 function durableTrades(state) {
   return [
     ...(state?.trades || []),
@@ -288,10 +350,12 @@ function durableTrades(state) {
 function buildClientBackup(state) {
   return {
     updatedAt: state.updatedAt || state.serverTime || new Date().toISOString(),
+    serverResetAt: state.bot?.manualResetAt || null,
     account: state.account,
     openTrade: state.openTrade || null,
     trades: (state.trades || []).slice(0, CLIENT_BACKUP_TRADE_LIMIT),
     insights: (state.insights || []).slice(0, 20),
+    userHabits: state.userHabits || null,
   };
 }
 
@@ -299,6 +363,11 @@ function saveClientBackup(state) {
   if (!window.localStorage || !state) return;
   const hasTradeHistory = (state.trades || []).length || state.openTrade;
   const hasAccountHistory = Math.abs(Number(state.account?.realizedPnlUsdt || 0)) > 0.0001;
+  const resetLocked = state.bot?.manualResetAt || state.bot?.status === "paused-after-reset";
+  if (resetLocked && !hasTradeHistory && !hasAccountHistory) {
+    clearClientBackup();
+    return;
+  }
   if (!hasTradeHistory && !hasAccountHistory) return;
   try {
     localStorage.setItem(CLIENT_BACKUP_KEY, JSON.stringify(buildClientBackup(state)));
@@ -372,6 +441,7 @@ function updateState(state) {
   setText(els.dataSource, state.market.source || "--");
   updateTickerTape(state, priceChange);
   updateContractBoard(state, open);
+  updateManualOrderPanel(state);
 
   setText(els.positionTitle, open ? `${open.signalLabel} · ${directionText(open.direction)}` : "等待信号");
   setText(els.positionDirection, open ? directionText(open.direction) : "--");
@@ -412,6 +482,7 @@ function renderTrades(state) {
           <td>${fmtDateTime(trade.entryTime)}</td>
           <td><span class="tag period">${durationLabel(trade)}</span></td>
           <td><span class="tag ${directionClass}">${directionText(trade.direction)}</span></td>
+          <td><span class="tag source">${actorText(trade)}</span></td>
           <td>${fmtUsdt(trade.stakeUsdt)}</td>
           <td>$${fmtPrice(trade.entryPrice)}</td>
           <td>${trade.exitPrice ? `$${fmtPrice(trade.exitPrice)}` : "等待结算"}</td>
@@ -845,7 +916,12 @@ async function postJson(url, body = {}) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  const state = await response.json();
+  const payload = await response.json();
+  if (!response.ok) {
+    if (payload.state) updateState(payload.state);
+    throw new Error(payload.error || `HTTP ${response.status}`);
+  }
+  const state = payload.state || payload;
   updateState(state);
   return state;
 }
@@ -889,9 +965,50 @@ els.advanceBot.addEventListener("click", () => {
   postJson("/api/advance");
 });
 
-els.resetBot.addEventListener("click", () => {
+async function submitManualOrder(direction) {
+  const durationMinutes = Number(els.manualDuration.value || 10);
+  const stakeUsdt = Number(els.manualStake.value || latestState?.config?.minStakeUsdt || 5);
+  setText(els.manualStatus, "正在按真实 Binance 永续价提交手动模拟单...");
+  try {
+    await postJson("/api/manual-order", { direction, durationMinutes, stakeUsdt });
+  } catch (error) {
+    setText(els.manualStatus, error.message);
+  }
+}
+
+els.manualButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    submitManualOrder(button.dataset.manualDirection);
+  });
+});
+
+function openResetConfirm() {
+  els.resetConfirm.hidden = false;
+  els.confirmReset.focus();
+}
+
+function closeResetConfirm() {
+  els.resetConfirm.hidden = true;
+}
+
+async function confirmResetSimulation() {
+  closeResetConfirm();
   clearClientBackup();
-  postJson("/api/reset");
+  await postJson("/api/reset");
+}
+
+els.resetBot.addEventListener("click", openResetConfirm);
+els.cancelReset.addEventListener("click", closeResetConfirm);
+els.confirmReset.addEventListener("click", () => {
+  confirmResetSimulation().catch(() => fetchState().catch(() => {}));
+});
+
+els.resetConfirm.addEventListener("click", (event) => {
+  if (event.target === els.resetConfirm) closeResetConfirm();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !els.resetConfirm.hidden) closeResetConfirm();
 });
 
 els.timeframeTabs.addEventListener("click", (event) => {

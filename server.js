@@ -30,7 +30,7 @@ const CONFIG = {
   startingRmb: 200,
   rmbPerUsdt: Number(process.env.RMB_PER_USDT || 7.2),
   minStakeUsdt: 5,
-  maxStakeUsdt: Number(process.env.MAX_STAKE_USDT || 8),
+  maxStakeUsdt: Number(process.env.MAX_STAKE_USDT || 6.5),
   maxStakeBalanceRatio: 0.32,
   payoutRate: 0.82,
   maxBootstrapTrades: 4,
@@ -111,6 +111,7 @@ function createInitialState() {
       nextSettlementTime: null,
       dataSource: "initializing",
       riskMode: "signal-gated-dynamic-stake",
+      manualResetAt: null,
       note: "模拟环境，仅用于策略观察和复盘。",
     },
     market: {
@@ -126,6 +127,7 @@ function createInitialState() {
     trades: [],
     nextTradeSequence: 1,
     insights: [],
+    userHabits: createInitialUserHabits(),
     stats: {
       totalTrades: 0,
       settledTrades: 0,
@@ -136,6 +138,22 @@ function createInitialState() {
       currentStreak: "0",
       profitFactor: 0,
     },
+  };
+}
+
+function createInitialUserHabits() {
+  return {
+    totalTrades: 0,
+    wins: 0,
+    losses: 0,
+    flats: 0,
+    winRate: 0,
+    longTrades: 0,
+    shortTrades: 0,
+    avgStakeUsdt: 0,
+    preferredDuration: "--",
+    lastLesson: "还没有魏夙手动单样本。",
+    patterns: [],
   };
 }
 
@@ -251,6 +269,16 @@ function mergeLoadedState(loaded) {
       1,
     ),
     insights: Array.isArray(loaded.insights) ? loaded.insights : [],
+    userHabits: normalizeUserHabits(loaded.userHabits),
+  };
+}
+
+function normalizeUserHabits(userHabits = {}) {
+  const fresh = createInitialUserHabits();
+  return {
+    ...fresh,
+    ...userHabits,
+    patterns: Array.isArray(userHabits.patterns) ? userHabits.patterns.slice(0, 20) : [],
   };
 }
 
@@ -307,6 +335,12 @@ function restoreClientSnapshot(snapshot = {}) {
   if (!backupTrades.length && !backupOpenTrade) {
     return { restored: false, reason: "empty-client-backup" };
   }
+  const serverResetAt = state.bot?.manualResetAt || null;
+  const resetLocked = Boolean(serverResetAt || state.bot?.status === "paused-after-reset");
+  const backupResetAt = snapshot.serverResetAt || null;
+  if (resetLocked && (!serverResetAt || backupResetAt !== serverResetAt)) {
+    return { restored: false, reason: "stale-client-backup-after-reset" };
+  }
   if (hasDurableHistory()) {
     return { restored: false, reason: "server-already-has-history" };
   }
@@ -331,6 +365,7 @@ function restoreClientSnapshot(snapshot = {}) {
     trades: backupTrades,
     nextTradeSequence: getMaxTradeSequence([...backupTrades, backupOpenTrade].filter(Boolean)) + 1,
     insights: Array.isArray(snapshot.insights) ? snapshot.insights.slice(0, 20) : [],
+    userHabits: normalizeUserHabits(snapshot.userHabits),
   };
   state.bot.status = "client-history-restored";
   state.bot.note = `已从浏览器本地备份恢复最近 ${backupTrades.length} 笔历史订单；后端继续扫描 Binance 永续1分钟行情。`;
@@ -753,7 +788,13 @@ async function refreshMarket(force = false) {
       });
     } catch (error) {
       mutateState(() => {
+        const keepResetPause = !state.bot.active && state.bot.manualResetAt && !state.trades.length && !state.openTrade;
         state.market.source = state.market.source === "none" ? "Binance disconnected" : state.market.source;
+        if (keepResetPause) {
+          state.bot.dataSource = state.market.candles.length ? `${state.market.source} 路 stale` : "Binance disconnected";
+          state.bot.lastError = error.message;
+          return;
+        }
         state.bot.status = state.market.candles.length ? "market-stale" : "market-disconnected";
         state.bot.dataSource = state.market.candles.length ? `${state.market.source} · stale` : "Binance disconnected";
         state.bot.lastError = error.message;
@@ -899,6 +940,12 @@ function findTradeSettlementCandle(trade) {
   return null;
 }
 
+function latestTradablePrice() {
+  const latestBase = state.market.baseCandles?.[state.market.baseCandles.length - 1];
+  const latestTenMinute = state.market.candles?.[state.market.candles.length - 1];
+  return Number(latestBase?.close || latestTenMinute?.close || state.market.currentPrice || 0);
+}
+
 function getLastEntryTimeMs(currentTime) {
   if (state.openTrade?.entryTime) return new Date(state.openTrade.entryTime).getTime();
   if (state.trades[0]?.entryTime) return new Date(state.trades[0].entryTime).getTime();
@@ -910,14 +957,17 @@ function evaluateTradeDecision(signal, currentTime) {
   const waitedMinutes = lastEntryTime ? Math.max(0, Math.round((currentTime - lastEntryTime) / 60000)) : 0;
   const recent = state.trades.slice(0, 2);
   const recentLosses = recent.filter((trade) => trade.result === "LOSS").length;
-  const minConfidence = recentLosses ? 0.65 : 0.61;
-  const minScore = recentLosses ? 0.42 : 0.3;
+  const minConfidence = recentLosses ? 0.68 : 0.64;
+  const minScore = recentLosses ? 0.55 : 0.45;
   const absScore = Math.abs(signal.score);
   const strongMomentum = Math.abs(signal.momentum3 || 0) >= 0.0009;
   const volumeConfirmed = (signal.volumeRatio || 1) >= 1.05;
-  const highConviction = signal.confidence >= 0.66 && absScore >= 0.52;
+  const highConviction = signal.confidence >= 0.68 && absScore >= 0.58;
   const enoughSignal = signal.confidence >= minConfidence && absScore >= minScore;
-  const opportunisticSignal = highConviction && (strongMomentum || volumeConfirmed);
+  const breakoutReady = strongMomentum && volumeConfirmed;
+  const exceptionalScore = absScore >= 0.95;
+  const standardConfirmed = enoughSignal && (strongMomentum || volumeConfirmed);
+  const opportunisticSignal = highConviction && (breakoutReady || exceptionalScore);
 
   if (opportunisticSignal) {
     return {
@@ -928,12 +978,21 @@ function evaluateTradeDecision(signal, currentTime) {
     };
   }
 
-  if (enoughSignal) {
+  if (standardConfirmed) {
     return {
       shouldOpen: true,
       forceMinStake: false,
       trigger: "信号达标",
       reason: `信号达标：置信度 ${Math.round(signal.confidence * 100)}%，强度 ${absScore.toFixed(2)}，不等待下一根10分钟开盘线。`,
+    };
+  }
+
+  if (enoughSignal) {
+    return {
+      shouldOpen: false,
+      forceMinStake: false,
+      trigger: "影子观察",
+      reason: `信号有方向但确认不足：置信度 ${Math.round(signal.confidence * 100)}%，强度 ${absScore.toFixed(2)}，量能 ${Number(signal.volumeRatio || 1).toFixed(2)}x，3根动量 ${round((signal.momentum3 || 0) * 100, 2)}%。先记录为影子样本，不因等待时间强行下单。`,
     };
   }
 
@@ -948,6 +1007,13 @@ function evaluateTradeDecision(signal, currentTime) {
 function calculateStake(signal, decision = {}) {
   const balance = state.account.availableBalanceUsdt;
   const minStake = CONFIG.minStakeUsdt;
+  if (Number.isFinite(Number(decision.stakeUsdt))) {
+    const requestedStake = round(Number(decision.stakeUsdt), 2);
+    return {
+      stakeUsdt: round(Math.max(minStake, Math.min(requestedStake, balance)), 2),
+      stakeReason: decision.stakeReason || `魏夙手动选择投入 ${requestedStake.toFixed(2)} USDT。`,
+    };
+  }
   if (decision.forceMinStake) {
     return { stakeUsdt: Math.min(minStake, balance), stakeReason: decision.reason };
   }
@@ -963,6 +1029,9 @@ function calculateStake(signal, decision = {}) {
   riskScore += Math.max(0, Math.min(1, Math.abs(signal.score) / 1.15)) * 0.45;
 
   if (signal.confidence < 0.6) riskScore *= 0.25;
+  if ((signal.volumeRatio || 1) < 1.05) riskScore *= 0.55;
+  if (Math.abs(signal.score || 0) < 0.9) riskScore *= 0.82;
+  if (signal.confidence < 0.68) riskScore *= 0.7;
   if (recent[0]?.result === "LOSS") riskScore *= 0.65;
   if (recentLosses >= 2) riskScore *= 0.35;
   if (drawdownRatio >= 0.28) riskScore *= 0.45;
@@ -1020,6 +1089,7 @@ function openTrade(entryPrice, entryTime, signal, mode = "live", decision = {}) 
   const settlementTime = entryTime + durationMs(durationMinutes);
   const { stakeUsdt, stakeReason } = calculateStake(signal, decision);
   const identity = createTradeId();
+  const isUserManual = mode === "user-manual";
   const trade = {
     id: identity.id,
     sequence: identity.sequence,
@@ -1044,11 +1114,23 @@ function openTrade(entryPrice, entryTime, signal, mode = "live", decision = {}) 
     confidence: signal.confidence,
     score: signal.score,
     signalLabel: signal.label,
+    signalReason: signal.reason,
+    actor: decision.actor || (isUserManual ? "魏夙手动" : "AI"),
+    userManual: isUserManual,
+    aiSignalDirection: decision.aiSignalDirection || null,
+    aiSignalConfidence: decision.aiSignalConfidence || null,
+    aiSignalReason: decision.aiSignalReason || null,
+    rsi: signal.rsi,
+    volumeRatio: signal.volumeRatio,
+    momentum3: signal.momentum3,
+    maSpread: signal.maSpread,
     stakeReason,
     durationReason,
     trigger: decision.trigger || "信号达标",
     decisionReason: decision.reason || "信号通过，执行模拟下单。",
-    preTradeNote: `AI ${signal.label}：${signal.reason}。${decision.reason || ""} 本笔为 ${durationMinutes} 分钟模拟事件订单，投入 ${stakeUsdt.toFixed(2)} USDT：${stakeReason}。周期选择：${durationReason}`,
+    preTradeNote: isUserManual
+      ? `魏夙手动${signal.direction === "LONG" ? "买涨" : "买跌"}：${signal.reason} 本笔为 ${durationMinutes} 分钟模拟事件订单，投入 ${stakeUsdt.toFixed(2)} USDT：${stakeReason}。周期选择：${durationReason}`
+      : `AI ${signal.label}：${signal.reason}。${decision.reason || ""} 本笔为 ${durationMinutes} 分钟模拟事件订单，投入 ${stakeUsdt.toFixed(2)} USDT：${stakeReason}。周期选择：${durationReason}`,
     summary: `等待 ${durationMinutes} 分钟订单结算。`,
     balanceAfterUsdt: null,
     createdAt: nowIso(),
@@ -1056,7 +1138,7 @@ function openTrade(entryPrice, entryTime, signal, mode = "live", decision = {}) 
 
   state.account.availableBalanceUsdt = round(state.account.availableBalanceUsdt - stakeUsdt, 4);
   state.openTrade = trade;
-  state.bot.status = mode === "live" ? "position-open" : "backfilling";
+  state.bot.status = isUserManual ? "user-position-open" : mode === "live" ? "position-open" : "backfilling";
   state.bot.lastDecisionAt = trade.entryTime;
   state.bot.lastEvaluationAt = trade.entryTime;
   state.bot.lastEvaluatedBucket = entryBucket;
@@ -1065,6 +1147,71 @@ function openTrade(entryPrice, entryTime, signal, mode = "live", decision = {}) 
   state.bot.note = trade.preTradeNote;
   recalculateAccountExposure();
 
+  return trade;
+}
+
+function buildUserManualSignal(direction, aiSignal) {
+  const aligned = aiSignal.direction === direction;
+  const magnitude = Math.max(0.18, Math.abs(Number(aiSignal.score || 0)));
+  return {
+    ...aiSignal,
+    direction,
+    confidence: aligned ? aiSignal.confidence : round(Math.max(0.35, 1 - Number(aiSignal.confidence || 0.52)), 3),
+    score: round(direction === "LONG" ? magnitude : -magnitude, 4),
+    label: direction === "LONG" ? "魏夙手动买涨" : "魏夙手动买跌",
+    reason: `魏夙手动选择${direction === "LONG" ? "买涨" : "买跌"}；AI 当时参考方向为${aiSignal.direction === "LONG" ? "买涨" : "买跌"}，原始理由：${aiSignal.reason}`,
+  };
+}
+
+async function openUserManualTrade(body = {}) {
+  const direction = String(body.direction || "").toUpperCase();
+  if (!["LONG", "SHORT"].includes(direction)) {
+    throw new Error("手动下单方向必须是买涨或买跌。");
+  }
+
+  const durationMinutes = Number(body.durationMinutes || 10);
+  if (!CONFIG.allowedOrderDurations.includes(durationMinutes)) {
+    throw new Error("手动订单周期只能选择 10m 或 15m。");
+  }
+
+  const stakeUsdt = round(Number(body.stakeUsdt || CONFIG.minStakeUsdt), 2);
+  if (!Number.isFinite(stakeUsdt) || stakeUsdt < CONFIG.minStakeUsdt) {
+    throw new Error(`手动下单最低 ${CONFIG.minStakeUsdt} USDT。`);
+  }
+
+  if (state.openTrade) {
+    throw new Error("当前已有未结算事件票据，等这一单结算后再手动下单。");
+  }
+
+  if (stakeUsdt > state.account.availableBalanceUsdt) {
+    throw new Error(`余额不足，可用 ${state.account.availableBalanceUsdt.toFixed(2)} USDT。`);
+  }
+
+  const entryPrice = latestTradablePrice();
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0) {
+    throw new Error("还没有可用的 Binance 永续入场价，先刷新行情后再手动下单。");
+  }
+
+  let trade = null;
+  mutateState(() => {
+    const signalCandles = state.market.baseCandles?.length ? state.market.baseCandles : state.market.candles;
+    const aiSignal = buildSignal(signalCandles);
+    const manualSignal = buildUserManualSignal(direction, aiSignal);
+    trade = openTrade(entryPrice, Date.now(), manualSignal, "user-manual", {
+      actor: "魏夙手动",
+      trigger: "魏夙手动下单",
+      reason: `魏夙手动参与模拟事件合约，选择 ${durationMinutes} 分钟${direction === "LONG" ? "买涨" : "买跌"}。`,
+      durationMinutes,
+      durationReason: `魏夙手动选择 ${durationMinutes} 分钟事件窗口。`,
+      stakeUsdt,
+      stakeReason: `魏夙手动选择投入 ${stakeUsdt.toFixed(2)} USDT。`,
+      aiSignalDirection: aiSignal.direction,
+      aiSignalConfidence: aiSignal.confidence,
+      aiSignalReason: aiSignal.reason,
+    });
+  });
+
+  if (!trade) throw new Error("手动下单失败，账户余额或行情状态不满足条件。");
   return trade;
 }
 
@@ -1086,11 +1233,12 @@ function settleTrade(exitPrice, exitTime) {
   trade.pnlUsdt = round(pnlUsdt, 4);
   trade.pnlRmb = round(pnlUsdt * state.account.rmbPerUsdt, 2);
   trade.priceMovePct = round(priceMove, 3);
-  trade.summary = buildTradeSummary(trade);
+  trade.summary = trade.mode === "user-manual" ? buildUserManualSummary(trade) : buildTradeSummaryV2(trade);
 
   state.account.availableBalanceUsdt = round(state.account.availableBalanceUsdt + returnedUsdt, 4);
   state.account.realizedPnlUsdt = round(state.account.realizedPnlUsdt + pnlUsdt, 4);
   state.account.realizedPnlRmb = round(state.account.realizedPnlUsdt * state.account.rmbPerUsdt, 2);
+  if (trade.mode === "user-manual") updateUserHabits(trade);
   state.openTrade = null;
   state.trades.unshift(trade);
   state.trades = state.trades.slice(0, CONFIG.maxTradeHistory);
@@ -1099,7 +1247,9 @@ function settleTrade(exitPrice, exitTime) {
   state.insights.unshift({
     time: trade.exitTime,
     type: trade.result,
-    title: trade.result === "WIN" ? "成功复盘" : trade.result === "LOSS" ? "失败复盘" : "持平复盘",
+    title: trade.mode === "user-manual"
+      ? `魏夙手动${trade.result === "WIN" ? "成功" : trade.result === "LOSS" ? "失败" : "持平"}复盘`
+      : trade.result === "WIN" ? "成功复盘" : trade.result === "LOSS" ? "失败复盘" : "持平复盘",
     body: trade.summary,
   });
   state.insights = state.insights.slice(0, 20);
@@ -1148,6 +1298,163 @@ function buildTradeSummary(trade) {
   return `${durationText}${directionText}持平：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}。${context}。本轮退回本金，说明事件窗口内没有形成足够价格差；下一轮优先等待更清晰的突破、放量或反转确认。`;
 }
 
+function buildTradeSummaryV2(trade) {
+  const directionText = trade.direction === "LONG" ? "买涨" : "买跌";
+  const durationText = `${trade.durationMinutes || 10}分钟`;
+  const moveText = `价格从 ${formatPrice(trade.entryPrice)} 到 ${formatPrice(trade.exitPrice)}，波动 ${trade.priceMovePct}%`;
+  const confidenceText = Number.isFinite(Number(trade.confidence))
+    ? `入场置信度 ${Math.round(Number(trade.confidence) * 100)}%`
+    : "入场置信度未记录";
+  const strengthText = Number.isFinite(Number(trade.score))
+    ? `信号强度 ${Math.abs(Number(trade.score)).toFixed(2)}`
+    : "信号强度未记录";
+  const triggerText = trade.trigger ? `触发来源：${trade.trigger}` : "触发来源：事件信号";
+  const durationReason = trade.durationReason || "周期按事件合约短线风险控制选择";
+  const signalReason = trade.signalReason || "入场时的结构信号未完整落档";
+  const volumeText = Number.isFinite(Number(trade.volumeRatio))
+    ? `量能 ${Number(trade.volumeRatio).toFixed(2)}x`
+    : "量能未记录";
+  const momentumText = Number.isFinite(Number(trade.momentum3))
+    ? `3根动量 ${round(Number(trade.momentum3) * 100, 2)}%`
+    : "3根动量未记录";
+  const rsiText = Number.isFinite(Number(trade.rsi)) ? `RSI ${Number(trade.rsi).toFixed(1)}` : "RSI 未记录";
+  const marketContext = [
+    Math.abs(Number(trade.priceMovePct || 0)) < 0.03 ? "到期前市场几乎没有拉开价差" : "到期前市场出现了可交易的方向波动",
+    Number(trade.volumeRatio || 0) >= 1.2 ? "量能明显放大" : Number(trade.volumeRatio || 0) >= 1.05 ? "量能有轻度确认" : "量能偏薄",
+    Math.abs(Number(trade.momentum3 || 0)) >= 0.0015 ? "短周期动量较强" : Math.abs(Number(trade.momentum3 || 0)) >= 0.0007 ? "短周期动量一般" : "短周期动量不足",
+  ].join("，");
+  const entryLogic = `入场逻辑：${signalReason}；${triggerText}；${confidenceText}；${strengthText}；${volumeText}；${momentumText}；${rsiText}；周期理由：${durationReason}`;
+
+  if (trade.result === "WIN") {
+    const lesson = Math.abs(trade.priceMovePct) < 0.08
+      ? "这笔胜利更多来自方向判断勉强站对，而不是厚边际兑现"
+      : "这笔胜利说明入场后的方向延续覆盖了事件合约到期窗口";
+    const nextStep = Number(trade.volumeRatio || 0) < 1.05
+      ? "下一轮同类低量能样本继续只给最小仓位，不放大利润错觉。"
+      : "下一轮继续要求量能和动量同向，不因单笔盈利扩大风险。";
+    return `${durationText}${directionText}成功：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}，净收益 ${trade.pnlUsdt.toFixed(2)} USDT。市场上下文：${marketContext}。${entryLogic}。成功原因：${lesson}。${nextStep}`;
+  }
+
+  if (trade.result === "LOSS") {
+    const againstDirection = trade.direction === "LONG" ? trade.priceMovePct < 0 : trade.priceMovePct > 0;
+    let diagnosis = "失败原因仍需继续从信号源拆解。";
+    if (Math.abs(trade.priceMovePct) < 0.06) {
+      diagnosis = "到期价差太窄，属于方向可能没错但赔率空间不够的事件合约失败。";
+    } else if (againstDirection) {
+      diagnosis = "入场后出现反向推进，说明触发点没有拿到后续资金流确认，属于反抽打穿。";
+    } else {
+      diagnosis = "方向并非完全错误，但到期点没有站到有利一侧，时间窗或入场点仍偏早。";
+    }
+    const nextAdjustment = Math.abs(Number(trade.priceMovePct || 0)) < 0.06
+      ? "下一轮把这类窄幅样本改成影子观察，等量能或动量更厚再下单。"
+      : Number(trade.volumeRatio || 0) < 1.05
+        ? "下一轮低量能信号只保留样本，不再给加仓权重。"
+        : "下一轮遇到突发反抽时，先等二次确认或更厚的合约流向再追。";
+    return `${durationText}${directionText}失败：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}，亏损 ${Math.abs(trade.pnlUsdt).toFixed(2)} USDT。市场上下文：${marketContext}。${entryLogic}。失败原因：${diagnosis}${nextAdjustment}`;
+  }
+
+  return `${durationText}${directionText}持平：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}。市场上下文：${marketContext}。${entryLogic}。本轮退回本金，说明事件窗口内没有形成足够价差；下一轮优先等更清晰的突破、放量或反转确认。`;
+}
+
+function buildUserManualSummary(trade) {
+  const directionText = trade.direction === "LONG" ? "买涨" : "买跌";
+  const durationText = `${trade.durationMinutes || 10}分钟`;
+  const aiDirectionText = trade.aiSignalDirection === "LONG" ? "买涨" : trade.aiSignalDirection === "SHORT" ? "买跌" : "未知";
+  const alignment = trade.aiSignalDirection === trade.direction ? "你这次和 AI 盘面方向同向" : "你这次是逆着 AI 盘面方向出手";
+  const moveText = `价格从 ${formatPrice(trade.entryPrice)} 到 ${formatPrice(trade.exitPrice)}，波动 ${trade.priceMovePct}%`;
+  const volumeText = Number.isFinite(Number(trade.volumeRatio)) ? `量能 ${Number(trade.volumeRatio).toFixed(2)}x` : "量能未记录";
+  const momentumText = Number.isFinite(Number(trade.momentum3)) ? `3根动量 ${round(Number(trade.momentum3) * 100, 2)}%` : "3根动量未记录";
+  const aiContext = `当时 AI 参考方向 ${aiDirectionText}，${alignment}；${volumeText}，${momentumText}，RSI ${Number(trade.rsi || 50).toFixed(1)}。`;
+
+  if (trade.result === "WIN") {
+    const habit = trade.aiSignalDirection === trade.direction
+      ? "这说明你顺着盘口和动量做判断时，胜率样本值得保留。"
+      : "这说明你有逆向抓反抽的成功样本，但这种打法要继续要求更清晰的到期价差。";
+    const riskNote = Math.abs(Number(trade.priceMovePct || 0)) < 0.06
+      ? "不过这笔价差不厚，不能因为赢了就把窄幅盘也当成高胜率。"
+      : "这笔到期价差覆盖了事件窗口，说明入场时机有效。";
+    return `魏夙手动${durationText}${directionText}成功：投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}，净收益 ${trade.pnlUsdt.toFixed(2)} USDT。${aiContext}判断正确点：${habit}${riskNote}我会把这类样本记为你的有效习惯，后续 AI 信号会参考你在同向/逆向场景下的表现。`;
+  }
+
+  if (trade.result === "LOSS") {
+    let diagnosis = "这笔失败要从入场确认不足复盘。";
+    if (trade.aiSignalDirection && trade.aiSignalDirection !== trade.direction) {
+      diagnosis = "主要问题是逆着 AI 盘面方向出手，但没有等到足够的二次确认。";
+    } else if (Number(trade.volumeRatio || 0) < 1.05) {
+      diagnosis = "主要问题是量能没有跟上，方向判断可能有想法，但事件合约到期窗口里赔率边际不够。";
+    } else if (Math.abs(Number(trade.priceMovePct || 0)) < 0.06) {
+      diagnosis = "主要问题是波动太窄，事件合约看对一点点也不一定能站到结算有利侧。";
+    } else {
+      diagnosis = "主要问题是入场后价格反向推进，说明触发点没有拿到后续资金流确认。";
+    }
+    const correction = trade.durationMinutes === 15
+      ? "下次 15m 手动单要更重视趋势延续，别只看一两根短线反应。"
+      : "下次 10m 手动单要更重视入场后一两分钟是否马上给方向反馈。";
+    return `魏夙手动${durationText}${directionText}失败：投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}，亏损 ${Math.abs(trade.pnlUsdt).toFixed(2)} USDT。${aiContext}你错在：${diagnosis}${correction}我会把这笔记入你的失败习惯样本，后续遇到类似盘口会提醒少下或等确认。`;
+  }
+
+  return `魏夙手动${durationText}${directionText}持平：投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}。${aiContext}这类样本说明方向和到期窗口都没有拉开优势，下次优先等更明确的放量或突破。`;
+}
+
+function buildUserHabitLesson(trade) {
+  const directionText = trade.direction === "LONG" ? "买涨" : "买跌";
+  const alignment = trade.aiSignalDirection === trade.direction ? "顺 AI 方向" : "逆 AI 方向";
+  if (trade.result === "WIN") {
+    return `${alignment}${directionText}成功，保留为有效判断样本。`;
+  }
+  if (trade.result === "LOSS") {
+    return `${alignment}${directionText}失败，下次要求量能、动量或二次确认更充分。`;
+  }
+  return `${alignment}${directionText}持平，说明到期价差不足。`;
+}
+
+function updateUserHabits(trade) {
+  const manualTrades = [
+    trade,
+    ...state.trades.filter((item) => item.mode === "user-manual" && item.status === "SETTLED"),
+  ].slice(0, CONFIG.maxTradeHistory);
+  const totalTrades = manualTrades.length;
+  const wins = manualTrades.filter((item) => item.result === "WIN").length;
+  const losses = manualTrades.filter((item) => item.result === "LOSS").length;
+  const flats = manualTrades.filter((item) => item.result === "FLAT").length;
+  const longTrades = manualTrades.filter((item) => item.direction === "LONG").length;
+  const shortTrades = manualTrades.filter((item) => item.direction === "SHORT").length;
+  const durationCounts = manualTrades.reduce((counts, item) => {
+    const key = `${item.durationMinutes || 10}m`;
+    counts[key] = (counts[key] || 0) + 1;
+    return counts;
+  }, {});
+  const preferredDuration = Object.entries(durationCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || "--";
+  const avgStakeUsdt = totalTrades
+    ? round(manualTrades.reduce((sum, item) => sum + Number(item.stakeUsdt || 0), 0) / totalTrades, 2)
+    : 0;
+  const lesson = buildUserHabitLesson(trade);
+
+  state.userHabits = {
+    totalTrades,
+    wins,
+    losses,
+    flats,
+    winRate: totalTrades ? round((wins / totalTrades) * 100, 1) : 0,
+    longTrades,
+    shortTrades,
+    avgStakeUsdt,
+    preferredDuration,
+    lastLesson: lesson,
+    patterns: [
+      {
+        time: trade.exitTime,
+        result: trade.result,
+        direction: trade.direction,
+        durationMinutes: trade.durationMinutes || 10,
+        stakeUsdt: trade.stakeUsdt,
+        lesson,
+      },
+      ...(state.userHabits?.patterns || []),
+    ].slice(0, 20),
+  };
+}
+
 function recalculateAccountExposure() {
   const openExposure = state.openTrade ? state.openTrade.stakeUsdt : 0;
   state.account.openExposureUsdt = round(openExposure, 4);
@@ -1187,6 +1494,8 @@ function recalculateStats() {
 
 async function bootstrapHistoricalTrades() {
   if (state.trades.length > 0 || state.openTrade) return;
+  if (!state.bot.active && state.bot.manualResetAt) return;
+  if (state.bot.status === "paused-after-reset") return;
 
   await refreshMarket(true);
   const closed = state.market.candles.filter((candle) => candle.closed);
@@ -1237,6 +1546,12 @@ async function botTick() {
       }
 
       if (!state.bot.active) {
+        if (state.openTrade) return;
+        if (state.bot.status === "paused-after-reset") {
+          state.bot.nextDecisionTime = null;
+          state.bot.nextSettlementTime = null;
+          return;
+        }
         state.bot.status = state.account.availableBalanceUsdt < CONFIG.minStakeUsdt ? "paused-low-balance" : "paused";
         state.bot.note = state.bot.status === "paused-low-balance"
           ? "余额低于 5 USDT，自动化暂停；重置模拟账户后会继续扫描 10/15 分钟事件订单。"
@@ -1307,6 +1622,10 @@ async function manualAdvance() {
       }
     } else if (!state.openTrade && !state.bot.active) {
       state.bot.nextDecisionTime = null;
+      if (state.bot.status === "paused-after-reset") {
+        state.bot.nextSettlementTime = null;
+        return;
+      }
       state.bot.status = state.account.availableBalanceUsdt < CONFIG.minStakeUsdt ? "paused-low-balance" : "paused";
       state.bot.note = state.bot.status === "paused-low-balance"
         ? "余额低于 5 USDT，自动化暂停；重置模拟账户后会继续扫描 10/15 分钟事件订单。"
@@ -1320,9 +1639,19 @@ async function manualAdvance() {
 }
 
 async function resetSimulation() {
+  const previousMarket = state.market;
+  const resetAt = nowIso();
   state = createInitialState();
-  await bootstrapHistoricalTrades();
-  await botTick();
+  state.market = previousMarket || state.market;
+  state.bot.dataSource = state.market.source || state.bot.dataSource;
+  state.bot.active = false;
+  state.bot.status = "paused-after-reset";
+  state.bot.manualResetAt = resetAt;
+  state.bot.note = "模拟盘已重置：账户、订单、复盘和持仓已清空；自动化已暂停，点击播放后才会重新扫描并模拟下单。";
+  state.bot.nextDecisionTime = null;
+  state.bot.nextSettlementTime = null;
+  state.updatedAt = nowIso();
+  recalculateStats();
   scheduleSave();
   broadcast();
 }
@@ -1412,6 +1741,17 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/advance" && req.method === "POST") {
       await manualAdvance();
       sendJson(res, publicState());
+      return;
+    }
+
+    if (url.pathname === "/api/manual-order" && req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        await openUserManualTrade(body);
+        sendJson(res, publicState());
+      } catch (error) {
+        sendJson(res, { error: error.message, state: publicState() }, 400);
+      }
       return;
     }
 
