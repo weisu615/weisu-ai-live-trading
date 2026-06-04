@@ -106,7 +106,8 @@
               <strong id="flareEdge">WAIT</strong>
             </div>
           </div>
-          <div class="chart-wrap">
+          <div class="chart-wrap tv-chart-wrap" id="tvChartWrap">
+            <div class="tv-kline-chart" id="tvKlineChart" aria-label="TradingView 风格 K线图"></div>
             <canvas id="klineCanvas"></canvas>
           </div>
           <div class="overview-wrap">
@@ -378,6 +379,7 @@
       </section>
     </div>
 
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

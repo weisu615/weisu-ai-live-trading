@@ -558,6 +558,23 @@ h1 {
   display: block;
 }
 
+.tv-kline-chart {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: none;
+  background: #0c0f13;
+}
+
+.tv-chart-wrap.tv-ready #tvKlineChart {
+  display: block;
+}
+
+.tv-chart-wrap.tv-ready #klineCanvas {
+  opacity: 0;
+  pointer-events: none;
+}
+
 #overviewCanvas {
   width: 100%;
   height: 100%;

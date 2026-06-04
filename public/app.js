@@ -64,6 +64,8 @@ const els = {
   userTradeRows: document.getElementById("userTradeRows"),
   canvas: document.getElementById("klineCanvas"),
   overviewCanvas: document.getElementById("overviewCanvas"),
+  tvChartWrap: document.getElementById("tvChartWrap"),
+  tvKlineChart: document.getElementById("tvKlineChart"),
   timeframeTabs: document.getElementById("timeframeTabs"),
   toggleOverview: document.getElementById("toggleOverview"),
   zoomIn: document.getElementById("zoomIn"),
@@ -86,6 +88,11 @@ let autoAdvanceTimer = null;
 let autoAdvanceInFlight = false;
 let chartCandlesByTimeframe = new Map();
 let chartLoadingTimeframe = null;
+let tradingViewChart = null;
+let tradingViewCandleSeries = null;
+let tradingViewVolumeSeries = null;
+let tradingViewMarkerApi = null;
+let tradingViewDataSignature = "";
 
 const CLIENT_BACKUP_KEY = "weisu-ai-live-trading:snapshot:v1";
 const STATE_POLL_MS = 10 * 1000;
@@ -723,12 +730,200 @@ function loadTimeframeCandles(timeframe) {
     });
 }
 
+function getLightweightChartsApi() {
+  return window.LightweightCharts || null;
+}
+
+function initTradingViewChart() {
+  if (!els.tvKlineChart || !els.tvChartWrap) return false;
+  if (tradingViewChart && tradingViewCandleSeries) return true;
+  const api = getLightweightChartsApi();
+  if (!api?.createChart) return false;
+
+  try {
+    tradingViewChart = api.createChart(els.tvKlineChart, {
+      autoSize: true,
+      layout: {
+        background: { type: "solid", color: "#0c0f13" },
+        textColor: "#aeb7c4",
+        fontFamily: "Inter, Microsoft YaHei, sans-serif",
+      },
+      grid: {
+        vertLines: { color: "rgba(255,255,255,0.055)" },
+        horzLines: { color: "rgba(255,255,255,0.075)" },
+      },
+      rightPriceScale: {
+        borderColor: "rgba(255,255,255,0.1)",
+        scaleMargins: { top: 0.08, bottom: 0.18 },
+      },
+      timeScale: {
+        borderColor: "rgba(255,255,255,0.1)",
+        timeVisible: !LONG_HISTORY_TIMEFRAMES.has(selectedTimeframe),
+        secondsVisible: false,
+        rightOffset: 6,
+        barSpacing: 8,
+      },
+      crosshair: {
+        mode: api.CrosshairMode?.Normal ?? 0,
+        vertLine: { color: "rgba(215,168,79,0.42)", width: 1, style: 2 },
+        horzLine: { color: "rgba(215,168,79,0.42)", width: 1, style: 2 },
+      },
+    });
+
+    tradingViewCandleSeries = addTradingViewSeries(api, "candles", {
+      upColor: "#18c47c",
+      downColor: "#f05d5e",
+      borderUpColor: "#18c47c",
+      borderDownColor: "#f05d5e",
+      wickUpColor: "#18c47c",
+      wickDownColor: "#f05d5e",
+      priceLineColor: "#d7a84f",
+      priceLineWidth: 1,
+    });
+    tradingViewVolumeSeries = addTradingViewSeries(api, "volume", {
+      priceFormat: { type: "volume" },
+      priceScaleId: "",
+      color: "rgba(54,214,195,0.28)",
+    });
+    tradingViewVolumeSeries?.priceScale?.()?.applyOptions?.({
+      scaleMargins: { top: 0.82, bottom: 0 },
+    });
+    els.tvChartWrap.classList.add("tv-ready");
+    return true;
+  } catch {
+    els.tvChartWrap.classList.remove("tv-ready");
+    tradingViewChart = null;
+    tradingViewCandleSeries = null;
+    tradingViewVolumeSeries = null;
+    return false;
+  }
+}
+
+function addTradingViewSeries(api, type, options) {
+  if (type === "candles" && tradingViewChart.addCandlestickSeries) {
+    return tradingViewChart.addCandlestickSeries(options);
+  }
+  if (type === "volume" && tradingViewChart.addHistogramSeries) {
+    return tradingViewChart.addHistogramSeries(options);
+  }
+  if (tradingViewChart.addSeries) {
+    const seriesType = type === "candles" ? api.CandlestickSeries : api.HistogramSeries;
+    if (seriesType) return tradingViewChart.addSeries(seriesType, options);
+  }
+  throw new Error(`Lightweight Charts ${type} series is unavailable`);
+}
+
+function toTradingViewTime(openTime) {
+  return Math.floor(Number(openTime || 0) / 1000);
+}
+
+function uniqueTradingViewCandles(candles) {
+  const seen = new Set();
+  return candles
+    .filter((candle) => Number.isFinite(Number(candle.openTime)) && Number.isFinite(Number(candle.close)))
+    .map((candle) => ({
+      time: toTradingViewTime(candle.openTime),
+      open: Number(candle.open),
+      high: Number(candle.high),
+      low: Number(candle.low),
+      close: Number(candle.close),
+      volume: Number(candle.volume || 0),
+    }))
+    .filter((candle) => {
+      if (seen.has(candle.time)) return false;
+      seen.add(candle.time);
+      return true;
+    })
+    .sort((a, b) => a.time - b.time);
+}
+
+function tradingViewSignature(candles, trades) {
+  const first = candles[0]?.time || 0;
+  const last = candles[candles.length - 1]?.time || 0;
+  const lastClose = candles[candles.length - 1]?.close || 0;
+  const tradeKey = trades.map((trade) => `${trade.id}:${trade.status}:${trade.entryPrice}:${trade.exitPrice || ""}`).join("|");
+  return `${selectedTimeframe}:${candles.length}:${first}:${last}:${lastClose}:${tradeKey}`;
+}
+
+function buildTradingViewMarkers(candles, state) {
+  const first = candles[0]?.time || 0;
+  const last = candles[candles.length - 1]?.time || 0;
+  return [...(state.trades || []), state.openTrade, state.userOpenTrade]
+    .filter(Boolean)
+    .map((trade) => {
+      const time = toTradingViewTime(new Date(trade.entryTime).getTime());
+      if (!time || time < first || time > last) return null;
+      const isLong = trade.direction === "LONG";
+      return {
+        time,
+        position: isLong ? "belowBar" : "aboveBar",
+        color: isLong ? "#36d6c3" : "#d7a84f",
+        shape: isLong ? "arrowUp" : "arrowDown",
+        text: `${durationLabel(trade)} ${directionText(trade.direction)} ${Number(trade.stakeUsdt || 0).toFixed(2)}U`,
+      };
+    })
+    .filter(Boolean);
+}
+
+function applyTradingViewMarkers(markers) {
+  const api = getLightweightChartsApi();
+  if (!tradingViewCandleSeries) return;
+  if (tradingViewMarkerApi?.setMarkers) {
+    tradingViewMarkerApi.setMarkers(markers);
+    return;
+  }
+  if (api?.createSeriesMarkers) {
+    tradingViewMarkerApi = api.createSeriesMarkers(tradingViewCandleSeries, markers);
+    return;
+  }
+  if (tradingViewCandleSeries.setMarkers) {
+    tradingViewCandleSeries.setMarkers(markers);
+  }
+}
+
+function renderTradingViewChart(state, windowInfo) {
+  if (!initTradingViewChart()) return false;
+  const candles = uniqueTradingViewCandles(windowInfo.allCandles || []);
+  if (!candles.length) return false;
+  const trades = [...(state.trades || []), state.openTrade, state.userOpenTrade].filter(Boolean);
+  const signature = tradingViewSignature(candles, trades);
+
+  if (signature !== tradingViewDataSignature) {
+    tradingViewCandleSeries.setData(candles.map(({ time, open, high, low, close }) => ({ time, open, high, low, close })));
+    tradingViewVolumeSeries?.setData?.(candles.map((candle) => ({
+      time: candle.time,
+      value: candle.volume,
+      color: candle.close >= candle.open ? "rgba(24,196,124,0.24)" : "rgba(240,93,94,0.24)",
+    })));
+    applyTradingViewMarkers(buildTradingViewMarkers(candles, state));
+    tradingViewDataSignature = signature;
+  }
+
+  tradingViewChart.applyOptions({
+    timeScale: {
+      timeVisible: !LONG_HISTORY_TIMEFRAMES.has(selectedTimeframe),
+      barSpacing: chartView === "overview" ? 4 : Math.max(5, Math.min(12, 680 / Math.max(24, windowInfo.count || 64))),
+    },
+  });
+  const visible = uniqueTradingViewCandles(windowInfo.candles || []);
+  if (visible.length >= 2) {
+    tradingViewChart.timeScale().setVisibleRange({
+      from: visible[0].time,
+      to: visible[visible.length - 1].time,
+    });
+  } else {
+    tradingViewChart.timeScale().fitContent();
+  }
+  return true;
+}
+
 function drawChart(state) {
   loadTimeframeCandles(selectedTimeframe);
   const candlesForTimeframe = candlesForSelectedTimeframe(state);
   const windowInfo = getWindowInfo(candlesForTimeframe);
   updateChartRangeLabel(windowInfo);
-  drawMainChart(state, windowInfo);
+  const renderedTradingView = renderTradingViewChart(state, windowInfo);
+  if (!renderedTradingView) drawMainChart(state, windowInfo);
   drawOverviewChart(state, windowInfo);
 }
 

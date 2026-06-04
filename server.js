@@ -30,7 +30,7 @@ const CONFIG = {
   startingRmb: 200,
   rmbPerUsdt: Number(process.env.RMB_PER_USDT || 7.2),
   minStakeUsdt: 5,
-  maxStakeUsdt: Number(process.env.MAX_STAKE_USDT || 6.5),
+  maxStakeUsdt: Number(process.env.MAX_STAKE_USDT || 5),
   maxStakeBalanceRatio: 0.32,
   payoutRate: 0.82,
   maxBootstrapTrades: 4,
@@ -79,6 +79,69 @@ function formatPrice(value) {
   return round(value, 2).toFixed(2);
 }
 
+function formatCompactNumber(value, digits = 2) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "--";
+  if (Math.abs(numeric) >= 1_000_000_000) return `${round(numeric / 1_000_000_000, digits)}B`;
+  if (Math.abs(numeric) >= 1_000_000) return `${round(numeric / 1_000_000, digits)}M`;
+  if (Math.abs(numeric) >= 1_000) return `${round(numeric / 1_000, digits)}K`;
+  return round(numeric, digits).toString();
+}
+
+function createInitialSentiment() {
+  return {
+    source: "none",
+    status: "waiting",
+    refreshedAt: null,
+    lastError: null,
+    openInterest: {
+      value: null,
+      valueText: "--",
+      trendPct: null,
+      time: null,
+    },
+    funding: {
+      lastFundingRate: null,
+      nextFundingTime: null,
+      markPrice: null,
+      indexPrice: null,
+    },
+    longShort: {
+      period: "5m",
+      ratio: null,
+      longAccount: null,
+      shortAccount: null,
+      timestamp: null,
+    },
+    takerFlow: {
+      period: "5m",
+      buySellRatio: null,
+      buyVol: null,
+      sellVol: null,
+      timestamp: null,
+    },
+    orderBook: {
+      bidVolume: null,
+      askVolume: null,
+      imbalance: null,
+      depth: 20,
+    },
+  };
+}
+
+function normalizeSentiment(sentiment = {}) {
+  const fresh = createInitialSentiment();
+  return {
+    ...fresh,
+    ...sentiment,
+    openInterest: { ...fresh.openInterest, ...sentiment.openInterest },
+    funding: { ...fresh.funding, ...sentiment.funding },
+    longShort: { ...fresh.longShort, ...sentiment.longShort },
+    takerFlow: { ...fresh.takerFlow, ...sentiment.takerFlow },
+    orderBook: { ...fresh.orderBook, ...sentiment.orderBook },
+  };
+}
+
 function createInitialState() {
   const startingBalanceUsdt = round(CONFIG.startingRmb / CONFIG.rmbPerUsdt, 4);
 
@@ -122,6 +185,7 @@ function createInitialState() {
       candles: [],
       refreshedAt: null,
       priceChangePct: 0,
+      sentiment: createInitialSentiment(),
     },
     openTrade: null,
     userOpenTrade: null,
@@ -265,7 +329,12 @@ function mergeLoadedState(loaded) {
     mode: fresh.mode,
     config: { ...fresh.config, ...loaded.config, ...CONFIG },
     bot: { ...fresh.bot, ...loaded.bot },
-    market: { ...fresh.market, ...loaded.market, symbol: CONFIG.symbol },
+    market: {
+      ...fresh.market,
+      ...loaded.market,
+      symbol: CONFIG.symbol,
+      sentiment: normalizeSentiment(loaded.market?.sentiment),
+    },
     account: { ...fresh.account, ...loaded.account },
     openTrade,
     userOpenTrade,
@@ -481,10 +550,18 @@ function buildSentimentCloud() {
     : 1 - Number(signal?.confidence || 0.5);
   const shortEdge = 1 - longEdge;
   const eventEdge = Math.max(longEdge, shortEdge);
+  const marketSentiment = normalizeSentiment(state.market.sentiment);
+  const oiValue = Number(marketSentiment.openInterest?.value);
+  const oiTrend = Number(marketSentiment.openInterest?.trendPct);
+  const fundingRate = Number(marketSentiment.funding?.lastFundingRate);
+  const longAccount = Number(marketSentiment.longShort?.longAccount);
+  const shortAccount = Number(marketSentiment.longShort?.shortAccount);
+  const longShortRatio = Number(marketSentiment.longShort?.ratio);
+  const takerRatio = Number(marketSentiment.takerFlow?.buySellRatio);
 
   return {
-    updatedAt: state.market.refreshedAt || nowIso(),
-    source: state.market.source || "waiting",
+    updatedAt: marketSentiment.refreshedAt || state.market.refreshedAt || nowIso(),
+    source: `${state.market.source || "waiting"} · ${marketSentiment.source || "sentiment waiting"}`,
     items: [
       {
         key: "price-momentum",
@@ -495,12 +572,42 @@ function buildSentimentCloud() {
         intensity: Math.min(100, Math.round(Math.abs(recentMovePct) * 280)),
       },
       {
-        key: "volume-pulse",
-        label: "成交突变",
-        value: `${volumePulse.toFixed(2)}x`,
-        tone: volumePulse >= 1.2 ? "hot" : volumePulse >= 1.05 ? "warm" : "flat",
-        detail: volumePulse >= 1.05 ? "量能开始给事件窗口确认" : "量能仍偏薄",
-        intensity: Math.min(100, Math.round(volumePulse * 45)),
+        key: "taker-flow",
+        label: "主动买卖",
+        value: Number.isFinite(takerRatio) ? `${takerRatio.toFixed(2)}x` : `${volumePulse.toFixed(2)}x`,
+        tone: Number.isFinite(takerRatio)
+          ? takerRatio >= 1.12 ? "hot" : takerRatio <= 0.9 ? "bear" : "flat"
+          : volumePulse >= 1.2 ? "hot" : volumePulse >= 1.05 ? "warm" : "flat",
+        detail: Number.isFinite(takerRatio)
+          ? `主动买量/卖量 ${formatCompactNumber(marketSentiment.takerFlow.buyVol)} / ${formatCompactNumber(marketSentiment.takerFlow.sellVol)}`
+          : "主动买卖量断开，暂用K线量能",
+        intensity: Number.isFinite(takerRatio) ? Math.min(100, Math.round(takerRatio * 50)) : Math.min(100, Math.round(volumePulse * 45)),
+      },
+      {
+        key: "open-interest",
+        label: "持仓量 OI",
+        value: Number.isFinite(oiValue) ? `${formatCompactNumber(oiValue)} BTC` : "断开",
+        tone: Number.isFinite(oiTrend) ? oiTrend > 0.08 ? "hot" : oiTrend < -0.08 ? "bear" : "flat" : "muted",
+        detail: Number.isFinite(oiTrend) ? `5m OI ${oiTrend >= 0 ? "+" : ""}${oiTrend.toFixed(2)}%` : marketSentiment.lastError || "等待 Binance OI",
+        intensity: Number.isFinite(oiTrend) ? Math.min(100, 40 + Math.round(Math.abs(oiTrend) * 80)) : 18,
+      },
+      {
+        key: "funding-rate",
+        label: "资金费率",
+        value: Number.isFinite(fundingRate) ? `${(fundingRate * 100).toFixed(4)}%` : "断开",
+        tone: Number.isFinite(fundingRate) ? fundingRate > 0.0002 ? "warm" : fundingRate < -0.0002 ? "bear" : "flat" : "muted",
+        detail: marketSentiment.funding?.nextFundingTime ? `下次资金费率 ${new Date(marketSentiment.funding.nextFundingTime).toISOString().slice(11, 16)} UTC` : "等待资金费率",
+        intensity: Number.isFinite(fundingRate) ? Math.min(100, 36 + Math.round(Math.abs(fundingRate) * 120000)) : 18,
+      },
+      {
+        key: "long-short",
+        label: "多空账户比例",
+        value: Number.isFinite(longShortRatio) ? `${longShortRatio.toFixed(2)}x` : "断开",
+        tone: Number.isFinite(longShortRatio) ? longShortRatio >= 1.08 ? "hot" : longShortRatio <= 0.92 ? "bear" : "flat" : "muted",
+        detail: Number.isFinite(longAccount) && Number.isFinite(shortAccount)
+          ? `多 ${round(longAccount * 100, 1)}% / 空 ${round(shortAccount * 100, 1)}%`
+          : "等待多空账户比",
+        intensity: Number.isFinite(longShortRatio) ? Math.min(100, 42 + Math.round(Math.abs(longShortRatio - 1) * 95)) : 18,
       },
       {
         key: "event-edge",
@@ -509,30 +616,6 @@ function buildSentimentCloud() {
         tone: eventEdge >= 0.66 ? "hot" : eventEdge >= 0.58 ? "warm" : "flat",
         detail: signal ? `${signal.direction === "LONG" ? "买涨" : "买跌"}影子估算` : "等待信号样本",
         intensity: Math.round(eventEdge * 100),
-      },
-      {
-        key: "contract-flow",
-        label: "事件票流",
-        value: getOpenTrades().length ? "LIVE" : "WAIT",
-        tone: getOpenTrades().length ? "hot" : "flat",
-        detail: getOpenTrades().length ? "已有未结算模拟票据" : "无未结算票据",
-        intensity: getOpenTrades().length ? 88 : 34,
-      },
-      {
-        key: "oi",
-        label: "持仓量 OI",
-        value: "待接入",
-        tone: "muted",
-        detail: "后续接入多源行情，不用假数据",
-        intensity: 18,
-      },
-      {
-        key: "long-short",
-        label: "多空账户比例",
-        value: "待接入",
-        tone: "muted",
-        detail: "预留 TradingView/多源情绪接口",
-        intensity: 18,
       },
     ],
   };
@@ -787,6 +870,124 @@ function buildBinanceFapiEndpoints(symbol) {
   });
 }
 
+function buildBinanceEndpoint(base, pathname, params = {}) {
+  const endpointUrl = new URL(pathname, base);
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) endpointUrl.searchParams.set(key, String(value));
+  });
+  return endpointUrl.toString();
+}
+
+async function fetchMarketSentimentFromBinance(symbol) {
+  const errors = [];
+  for (const base of getBinanceFapiBases()) {
+    try {
+      return await fetchMarketSentimentFromBase(base, symbol);
+    } catch (error) {
+      errors.push({ host: safeHost(base), source: `Binance USD-M Futures sentiment`, message: error.message });
+    }
+  }
+
+  const fallback = createInitialSentiment();
+  fallback.source = "Binance sentiment disconnected";
+  fallback.status = "error";
+  fallback.refreshedAt = nowIso();
+  fallback.lastError = summarizeKlineFetchErrors(errors, "sentiment");
+  return fallback;
+}
+
+async function fetchMarketSentimentFromBase(base, symbol) {
+  const endpoints = {
+    openInterest: buildBinanceEndpoint(base, "/fapi/v1/openInterest", { symbol }),
+    funding: buildBinanceEndpoint(base, "/fapi/v1/premiumIndex", { symbol }),
+    longShort: buildBinanceEndpoint(base, "/futures/data/globalLongShortAccountRatio", { symbol, period: "5m", limit: 2 }),
+    takerFlow: buildBinanceEndpoint(base, "/futures/data/takerlongshortRatio", { symbol, period: "5m", limit: 2 }),
+    openInterestHist: buildBinanceEndpoint(base, "/futures/data/openInterestHist", { symbol, period: "5m", limit: 2 }),
+    depth: buildBinanceEndpoint(base, "/fapi/v1/depth", { symbol, limit: 20 }),
+  };
+
+  const results = await Promise.allSettled(
+    Object.entries(endpoints).map(async ([key, url]) => [key, await fetchJson(url)]),
+  );
+  const payloads = {};
+  const failures = [];
+  results.forEach((result) => {
+    if (result.status === "fulfilled") {
+      const [key, payload] = result.value;
+      payloads[key] = payload;
+      return;
+    }
+    failures.push(result.reason?.message || String(result.reason));
+  });
+
+  if (!Object.keys(payloads).length) {
+    throw new Error(failures[0] || "No sentiment endpoints returned data");
+  }
+
+  const openInterest = payloads.openInterest || {};
+  const funding = payloads.funding || {};
+  const longShort = latestArrayRow(payloads.longShort);
+  const takerFlow = latestArrayRow(payloads.takerFlow);
+  const oiHistory = Array.isArray(payloads.openInterestHist) ? payloads.openInterestHist : [];
+  const depth = payloads.depth || {};
+  const previousOi = Number(oiHistory[0]?.sumOpenInterest || 0);
+  const latestOi = Number(oiHistory[oiHistory.length - 1]?.sumOpenInterest || openInterest.openInterest || 0);
+  const oiTrendPct = previousOi && latestOi ? round(((latestOi - previousOi) / previousOi) * 100, 3) : null;
+  const bidVolume = sumDepthVolume(depth.bids);
+  const askVolume = sumDepthVolume(depth.asks);
+  const imbalance = bidVolume + askVolume ? round((bidVolume - askVolume) / (bidVolume + askVolume), 4) : null;
+
+  return {
+    ...createInitialSentiment(),
+    source: `Binance USD-M Futures sentiment (${safeHost(base)})`,
+    status: failures.length ? "partial" : "connected",
+    refreshedAt: nowIso(),
+    lastError: failures.length ? failures.slice(0, 2).join(" | ") : null,
+    openInterest: {
+      value: Number(openInterest.openInterest || latestOi || 0) || null,
+      valueText: openInterest.openInterest ? `${formatCompactNumber(openInterest.openInterest)} BTC` : "--",
+      trendPct: oiTrendPct,
+      time: openInterest.time || oiHistory[oiHistory.length - 1]?.timestamp || null,
+    },
+    funding: {
+      lastFundingRate: Number(funding.lastFundingRate),
+      nextFundingTime: Number(funding.nextFundingTime) || null,
+      markPrice: Number(funding.markPrice),
+      indexPrice: Number(funding.indexPrice),
+    },
+    longShort: {
+      period: "5m",
+      ratio: Number(longShort.longShortRatio),
+      longAccount: Number(longShort.longAccount),
+      shortAccount: Number(longShort.shortAccount),
+      timestamp: longShort.timestamp || null,
+    },
+    takerFlow: {
+      period: "5m",
+      buySellRatio: Number(takerFlow.buySellRatio),
+      buyVol: Number(takerFlow.buyVol),
+      sellVol: Number(takerFlow.sellVol),
+      timestamp: takerFlow.timestamp || null,
+    },
+    orderBook: {
+      bidVolume,
+      askVolume,
+      imbalance,
+      depth: 20,
+    },
+  };
+}
+
+function latestArrayRow(payload) {
+  if (Array.isArray(payload)) return payload[payload.length - 1] || {};
+  return payload || {};
+}
+
+function sumDepthVolume(rows) {
+  if (!Array.isArray(rows)) return null;
+  return round(rows.reduce((sum, row) => sum + Number(row[1] || 0), 0), 4);
+}
+
 function getBinanceFapiBases() {
   const configured = [process.env.BINANCE_FAPI_BASE_URL, process.env.BINANCE_FAPI_BASES]
     .filter(Boolean)
@@ -1001,6 +1202,7 @@ async function refreshMarket(force = false) {
   marketRefreshInFlight = (async () => {
     try {
       const { source, raw } = await fetchKlinesFromBinance();
+      const sentiment = await fetchMarketSentimentFromBinance(state.market.symbol || CONFIG.symbol);
       const baseCandles = raw.map(normalizeKline).map((candle) => ({
         ...candle,
         time: candle.openTime,
@@ -1022,6 +1224,7 @@ async function refreshMarket(force = false) {
         state.market.currentPrice = latest?.close || state.market.currentPrice;
         state.market.refreshedAt = nowIso();
         state.market.priceChangePct = previous ? round(((latest.close - previous.close) / previous.close) * 100, 3) : 0;
+        state.market.sentiment = sentiment;
         state.bot.dataSource = source;
         state.bot.lastError = null;
       });
@@ -1477,7 +1680,7 @@ function settleTrade(exitPrice, exitTime, slot = "ai") {
   trade.pnlUsdt = round(pnlUsdt, 4);
   trade.pnlRmb = round(pnlUsdt * state.account.rmbPerUsdt, 2);
   trade.priceMovePct = round(priceMove, 3);
-  trade.summary = trade.mode === "user-manual" ? buildUserManualSummary(trade) : buildTradeSummaryV3(trade);
+  trade.summary = trade.mode === "user-manual" ? buildUserManualSummary(trade) : buildTradeSummaryV4(trade);
 
   state.account.availableBalanceUsdt = round(state.account.availableBalanceUsdt + returnedUsdt, 4);
   state.account.realizedPnlUsdt = round(state.account.realizedPnlUsdt + pnlUsdt, 4);
@@ -1705,6 +1908,109 @@ function buildTradeSummaryV3(trade) {
   }
 
   return `${durationText}${directionText}持平：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}。市场上下文：${marketContext}。${entryLogic}。本轮退回本金，说明事件窗口内没有形成足够价差；下一轮优先等更清晰的突破、放量或反转确认。`;
+}
+
+function buildTradeSummaryV4(trade) {
+  const directionText = trade.direction === "LONG" ? "买涨" : "买跌";
+  const durationText = `${trade.durationMinutes || 10}分钟`;
+  const moveText = `价格从 ${formatPrice(trade.entryPrice)} 到 ${formatPrice(trade.exitPrice)}，波动 ${trade.priceMovePct}%`;
+  const confidenceText = Number.isFinite(Number(trade.confidence))
+    ? `入场置信度 ${Math.round(Number(trade.confidence) * 100)}%`
+    : "入场置信度未记录";
+  const strengthText = Number.isFinite(Number(trade.score))
+    ? `信号强度 ${Math.abs(Number(trade.score)).toFixed(2)}`
+    : "信号强度未记录";
+  const triggerText = trade.trigger ? `触发来源：${trade.trigger}` : "触发来源：事件信号";
+  const durationReason = trade.durationReason || "周期按事件合约短线风险控制选择";
+  const signalReason = trade.signalReason || "入场时的结构信号未完整落档";
+  const volumeRatio = Number(trade.volumeRatio || 0);
+  const volumeText = Number.isFinite(Number(trade.volumeRatio))
+    ? `量能 ${Number(trade.volumeRatio).toFixed(2)}x`
+    : "量能未记录";
+  const momentum3 = Number(trade.momentum3 || 0);
+  const momentumText = Number.isFinite(Number(trade.momentum3))
+    ? `3根动量 ${round(Number(trade.momentum3) * 100, 2)}%`
+    : "3根动量未记录";
+  const rsi = Number(trade.rsi || 50);
+  const rsiText = Number.isFinite(Number(trade.rsi)) ? `RSI ${Number(trade.rsi).toFixed(1)}` : "RSI 未记录";
+  const numericMovePct = Number(trade.priceMovePct || 0);
+  const absMovePct = Math.abs(numericMovePct);
+  const score = Number(trade.score || 0);
+  const scoreAbs = Math.abs(score);
+  const overextendedLong = trade.direction === "LONG" && rsi >= 68;
+  const overextendedShort = trade.direction === "SHORT" && rsi <= 32;
+  const thinFlow = volumeRatio < 1.05 && Math.abs(momentum3) < 0.0009;
+  const middleRangeEntry = scoreAbs < 0.5 && volumeRatio < 1.08;
+  const settlementWindowText = absMovePct >= 0.12
+    ? "到期窗口兑现充分"
+    : absMovePct >= 0.06
+      ? "到期窗口兑现一般"
+      : "到期窗口兑现偏弱";
+  const marketContext = [
+    absMovePct < 0.03 ? "到期前市场几乎没有拉开价差" : "到期前市场出现了可交易的方向波动",
+    volumeRatio >= 1.2 ? "量能明显放大" : volumeRatio >= 1.05 ? "量能有轻度确认" : "量能偏薄",
+    Math.abs(momentum3) >= 0.0015 ? "短周期动量较强" : Math.abs(momentum3) >= 0.0007 ? "短周期动量一般" : "短周期动量不足",
+    settlementWindowText,
+  ].join("；");
+  const entryLogic = `入场逻辑：${signalReason}；${triggerText}；${confidenceText}；${strengthText}；${volumeText}；${momentumText}；${rsiText}；周期理由：${durationReason}`;
+
+  if (trade.result === "WIN") {
+    const lesson = absMovePct < 0.08
+      ? "这笔胜利更像薄边际兑现，方向虽然站对，但优势并不厚。"
+      : trade.durationMinutes === 15
+        ? "这笔胜利说明结构、延续和持有窗口都匹配，15分钟事件单才有兑现基础。"
+        : "这笔胜利说明入场后的方向延续覆盖了10分钟到期窗口。";
+    const nextStep = volumeRatio < 1.05
+      ? "下一轮同类低量能样本继续只给最小仓位，不把薄胜误判成可放大的稳定优势。"
+      : overextendedLong || overextendedShort
+        ? "下一轮即便延续成功，也不要把过热追单当成常态模板；先等回踩或二次确认。"
+        : "下一轮继续要求量能和动量同向，不因单笔盈利扩大风险。";
+    return `${durationText}${directionText}成功：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}，净收益 ${trade.pnlUsdt.toFixed(2)} USDT。市场上下文：${marketContext}。${entryLogic}。成功原因：${lesson}${nextStep}`;
+  }
+
+  if (trade.result === "LOSS") {
+    const againstDirection = trade.direction === "LONG" ? numericMovePct < 0 : numericMovePct > 0;
+    let diagnosis = "失败原因仍需继续从信号源拆解。";
+    if (absMovePct < 0.06) {
+      diagnosis = "方向看对但赔率边际不值，到期价差太窄，属于事件合约窗口不赚钱的亏损。";
+    } else if (thinFlow && middleRangeEntry) {
+      diagnosis = "结构中段就先入场了，量能和短动量都没真正打开，更像在噪音里提前下注。";
+    } else if (thinFlow) {
+      diagnosis = "触发太晚或太薄，虽然盘面还保留方向，但量能和短动量都没把事件窗口真正推开。";
+    } else if (overextendedLong || overextendedShort) {
+      diagnosis = `入场时 RSI 已经${overextendedLong ? "偏高" : "偏低"}，更像末端追单，随后被均值回拉打掉。`;
+    } else if (againstDirection) {
+      diagnosis = "假突破后回到原结构内，说明触发点没拿到后续资金流确认，属于反抽打穿。";
+    } else {
+      diagnosis = "方向并非完全错误，但触发太晚，留给到期结算的有效赔率边际已经不够。";
+    }
+    const nextAdjustment = absMovePct < 0.06
+      ? "下一轮把这类窄幅样本改成影子观察，等量能、盘口或动量更厚再下单。"
+      : thinFlow && middleRangeEntry
+        ? "下一轮把结构中段的同类信号直接降级为影子观察，只保留区间边界突破或回踩续走样本。"
+        : thinFlow
+          ? "下一轮晚触发、低量能信号只保留样本，不再给真实模拟仓位优先级。"
+          : overextendedLong || overextendedShort
+            ? `下一轮把这类 RSI ${overextendedLong ? "过热追多" : "过冷追空"} 降级成等待二次确认，不再直接成交。`
+            : score && scoreAbs < 0.58
+              ? "下一轮同类刚过线信号降级为影子观察，等更厚的结构确认。"
+              : "下一轮遇到突发反抽时，先等二次确认或更厚的合约流向再进。";
+    return `${durationText}${directionText}失败：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}，亏损 ${Math.abs(trade.pnlUsdt).toFixed(2)} USDT。市场上下文：${marketContext}。${entryLogic}。失败原因：${diagnosis}${nextAdjustment}`;
+  }
+
+  const flatDiagnosis = absMovePct < 0.03
+    ? "方向看对但赔率边际不值，窗口内几乎没有形成可兑现价差。"
+    : thinFlow && middleRangeEntry
+      ? "结构中段先入场，结果价格来回扫动，事件窗口没有被真正打开。"
+      : thinFlow
+        ? "触发太晚，留给结算的时间不够，量能和动量也没把价差继续推开。"
+        : "假突破后回到原结构内，导致到期时只剩下持平。";
+  const flatNextStep = thinFlow && middleRangeEntry
+    ? "下一轮只保留结构边界附近的触发，不再为区间中段信号占用模拟仓位。"
+    : thinFlow
+      ? "下一轮晚触发样本先转影子观察，不用延长持有时间去硬凑成交。"
+      : "下一轮优先等更清晰的突破、放量或回踩续走确认。";
+  return `${durationText}${directionText}持平：本笔投入 ${trade.stakeUsdt.toFixed(2)} USDT，${moveText}。市场上下文：${marketContext}。${entryLogic}。持平原因：${flatDiagnosis}${flatNextStep}`;
 }
 
 function buildUserManualSummary(trade) {
