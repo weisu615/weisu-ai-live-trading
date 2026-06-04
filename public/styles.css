@@ -298,6 +298,187 @@ h1 {
   --accent: var(--red);
 }
 
+.accent-cyan {
+  --accent: var(--cyan);
+}
+
+.market-command-deck {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(250px, 0.85fr) minmax(0, 2.4fr);
+  gap: 14px;
+  margin: 0 0 14px;
+  padding: 16px;
+  border: 1px solid rgba(215, 168, 79, 0.28);
+  border-radius: 8px;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgba(215, 168, 79, 0.16), transparent 42%, rgba(54, 214, 195, 0.1)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
+    rgba(14, 16, 18, 0.92);
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.market-command-deck::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.045) 0 1px, transparent 1px 86px),
+    repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 44px);
+  opacity: 0.42;
+  pointer-events: none;
+}
+
+.market-command-deck::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(112deg, transparent 0 38%, rgba(248, 228, 172, 0.14) 47%, transparent 56%);
+  transform: translateX(-72%);
+  animation: command-deck-glint 8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.command-identity,
+.command-signal-grid {
+  position: relative;
+  z-index: 1;
+}
+
+.command-identity {
+  min-height: 146px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 4px 8px;
+}
+
+.command-identity h2 {
+  margin-top: 8px;
+  font-size: clamp(22px, 2.2vw, 32px);
+  line-height: 1.08;
+  letter-spacing: 0;
+}
+
+.command-identity p {
+  max-width: 34rem;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.command-signal-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.command-tile {
+  min-height: 146px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.022)),
+    rgba(12, 15, 18, 0.82);
+  position: relative;
+  overflow: hidden;
+}
+
+.command-tile::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 3px;
+  background: var(--accent, var(--gold));
+  box-shadow: 0 0 22px var(--accent, var(--gold));
+}
+
+.command-tile::after {
+  content: "";
+  position: absolute;
+  width: 74%;
+  height: 1px;
+  left: 16px;
+  bottom: 42px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.22), transparent);
+  opacity: 0.66;
+}
+
+.command-tile span,
+.command-tile strong,
+.command-tile small {
+  position: relative;
+  z-index: 1;
+}
+
+.command-tile span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.command-tile strong {
+  margin-top: auto;
+  padding-top: 18px;
+  font-size: clamp(20px, 2vw, 28px);
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.command-tile small {
+  min-height: 32px;
+  display: flex;
+  align-items: end;
+  color: #c9d0da;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.command-tile.tone-hot {
+  border-color: rgba(24, 196, 124, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(24, 196, 124, 0.06);
+}
+
+.command-tile.tone-hot strong {
+  color: #9ef0c6;
+  text-shadow: 0 0 18px rgba(24, 196, 124, 0.36);
+}
+
+.command-tile.tone-bear {
+  border-color: rgba(240, 93, 94, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(240, 93, 94, 0.06);
+}
+
+.command-tile.tone-bear strong {
+  color: #ff9ca5;
+  text-shadow: 0 0 18px rgba(240, 93, 94, 0.34);
+}
+
+.command-tile.tone-flat strong {
+  color: #f6dfa7;
+}
+
+.command-tile.tone-muted {
+  opacity: 0.74;
+}
+
+@keyframes command-deck-glint {
+  0%,
+  54% {
+    transform: translateX(-78%);
+  }
+
+  100% {
+    transform: translateX(78%);
+  }
+}
+
 .dashboard {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 380px;
@@ -1616,6 +1797,18 @@ td.summary-cell {
     grid-template-columns: 1fr 1fr;
   }
 
+  .market-command-deck {
+    grid-template-columns: 1fr;
+  }
+
+  .command-identity {
+    min-height: auto;
+  }
+
+  .command-signal-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .chart-panel {
     grid-column: 1 / -1;
   }
@@ -1649,9 +1842,18 @@ td.summary-cell {
   .metric-grid,
   .dashboard,
   .intelligence-grid,
+  .command-signal-grid,
   .position-list,
   .risk-strip {
     grid-template-columns: 1fr;
+  }
+
+  .market-command-deck {
+    padding: 14px;
+  }
+
+  .command-tile {
+    min-height: 112px;
   }
 
   .chart-wrap {

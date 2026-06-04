@@ -18,6 +18,17 @@ const els = {
   currentPrice: document.getElementById("currentPrice"),
   priceChange: document.getElementById("priceChange"),
   dataSource: document.getElementById("dataSource"),
+  deckSource: document.getElementById("deckSource"),
+  deckOpenInterest: document.getElementById("deckOpenInterest"),
+  deckOpenInterestMeta: document.getElementById("deckOpenInterestMeta"),
+  deckFunding: document.getElementById("deckFunding"),
+  deckFundingMeta: document.getElementById("deckFundingMeta"),
+  deckLongShort: document.getElementById("deckLongShort"),
+  deckLongShortMeta: document.getElementById("deckLongShortMeta"),
+  deckTakerFlow: document.getElementById("deckTakerFlow"),
+  deckTakerFlowMeta: document.getElementById("deckTakerFlowMeta"),
+  deckDiscipline: document.getElementById("deckDiscipline"),
+  deckDisciplineMeta: document.getElementById("deckDisciplineMeta"),
   klineRangeLabel: document.getElementById("klineRangeLabel"),
   flareEvent: document.getElementById("flareEvent"),
   flareOdds: document.getElementById("flareOdds"),
@@ -129,6 +140,28 @@ function fmtPrice(value) {
   });
 }
 
+function fmtCompact(value, digits = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "--";
+  const abs = Math.abs(number);
+  if (abs >= 1e9) return `${(number / 1e9).toFixed(digits)}B`;
+  if (abs >= 1e6) return `${(number / 1e6).toFixed(digits)}M`;
+  if (abs >= 1e3) return `${(number / 1e3).toFixed(digits)}K`;
+  return number.toFixed(digits);
+}
+
+function fmtPercentRatio(value, digits = 4) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "--";
+  return `${(number * 100).toFixed(digits)}%`;
+}
+
+function fmtUtcTime(value) {
+  const timestamp = Number(value);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "--";
+  return `${new Date(timestamp).toISOString().slice(11, 16)} UTC`;
+}
+
 function fmtTime(iso) {
   if (!iso) return "--";
   return new Intl.DateTimeFormat("zh-CN", {
@@ -207,6 +240,13 @@ function resultText(result) {
 function setText(el, value) {
   if (!el) return;
   el.textContent = value;
+}
+
+function setCommandTileTone(el, tone) {
+  const tile = el?.closest(".command-tile");
+  if (!tile) return;
+  tile.classList.remove("tone-hot", "tone-bear", "tone-flat", "tone-muted");
+  tile.classList.add(`tone-${tone || "flat"}`);
 }
 
 function escapeHtml(value) {
@@ -416,6 +456,71 @@ function updateSentimentCloud(state) {
   }).join("");
 }
 
+function updateMarketCommandDeck(state) {
+  const sentiment = state.market?.sentiment || {};
+  const openInterest = sentiment.openInterest || {};
+  const funding = sentiment.funding || {};
+  const longShort = sentiment.longShort || {};
+  const takerFlow = sentiment.takerFlow || {};
+  const open = state.openTrade || state.userOpenTrade;
+
+  const oiValue = Number(openInterest.value);
+  const oiTrend = Number(openInterest.trendPct);
+  setText(els.deckSource, sentiment.source || state.market?.source || "等待 Binance USD-M Futures 多源行情");
+  setText(els.deckOpenInterest, openInterest.valueText || (Number.isFinite(oiValue) ? `${fmtCompact(oiValue)} BTC` : "--"));
+  setText(
+    els.deckOpenInterestMeta,
+    Number.isFinite(oiTrend)
+      ? `5m OI ${oiTrend >= 0 ? "+" : ""}${oiTrend.toFixed(2)}%`
+      : "等待 openInterestHist",
+  );
+  setCommandTileTone(els.deckOpenInterest, Number.isFinite(oiTrend) ? (oiTrend > 0 ? "hot" : oiTrend < 0 ? "bear" : "flat") : "muted");
+
+  const fundingRate = Number(funding.lastFundingRate);
+  setText(els.deckFunding, fmtPercentRatio(fundingRate));
+  setText(els.deckFundingMeta, funding.nextFundingTime ? `下次 ${fmtUtcTime(funding.nextFundingTime)}` : "等待 premiumIndex");
+  setCommandTileTone(
+    els.deckFunding,
+    Number.isFinite(fundingRate) ? (fundingRate > 0.0002 ? "hot" : fundingRate < -0.0002 ? "bear" : "flat") : "muted",
+  );
+
+  const ratio = Number(longShort.ratio);
+  const longPct = Number(longShort.longAccount);
+  const shortPct = Number(longShort.shortAccount);
+  setText(els.deckLongShort, Number.isFinite(ratio) ? `${ratio.toFixed(2)}x` : "--");
+  setText(
+    els.deckLongShortMeta,
+    Number.isFinite(longPct) && Number.isFinite(shortPct)
+      ? `多 ${Math.round(longPct * 100)}% / 空 ${Math.round(shortPct * 100)}%`
+      : "等待 globalLongShortAccountRatio",
+  );
+  setCommandTileTone(els.deckLongShort, Number.isFinite(ratio) ? (ratio >= 1.08 ? "hot" : ratio <= 0.92 ? "bear" : "flat") : "muted");
+
+  const takerRatio = Number(takerFlow.buySellRatio);
+  setText(els.deckTakerFlow, Number.isFinite(takerRatio) ? `${takerRatio.toFixed(2)}x` : "--");
+  setText(
+    els.deckTakerFlowMeta,
+    Number.isFinite(takerRatio)
+      ? `买 ${fmtCompact(takerFlow.buyVol)} / 卖 ${fmtCompact(takerFlow.sellVol)}`
+      : "等待 takerlongshortRatio",
+  );
+  setCommandTileTone(els.deckTakerFlow, Number.isFinite(takerRatio) ? (takerRatio >= 1.12 ? "hot" : takerRatio <= 0.9 ? "bear" : "flat") : "muted");
+
+  if (open) {
+    setText(els.deckDiscipline, `${durationLabel(open)} ${directionText(open.direction)} LIVE`);
+    setText(els.deckDisciplineMeta, `${fmtUsdt(open.stakeUsdt)} @ $${fmtPrice(open.entryPrice)} · ${plainSettlementLabel(open)}`);
+    setCommandTileTone(els.deckDiscipline, open.direction === "LONG" ? "hot" : "bear");
+  } else if (!state.bot?.active || String(state.bot?.status || "").includes("paused")) {
+    setText(els.deckDiscipline, "PAUSED");
+    setText(els.deckDisciplineMeta, state.bot?.note || "自动策略暂停，模拟账户保留");
+    setCommandTileTone(els.deckDiscipline, "muted");
+  } else {
+    setText(els.deckDiscipline, sentiment.status === "connected" ? "SCANNING" : "WAIT");
+    setText(els.deckDisciplineMeta, sentiment.status === "connected" ? "只打高胜率，不强行出手" : "等待 Binance 多源行情连通");
+    setCommandTileTone(els.deckDiscipline, sentiment.status === "connected" ? "flat" : "muted");
+  }
+}
+
 function updateStrategyLab(state) {
   const lab = state.strategyLab || {};
   const rows = lab.candidates || [];
@@ -583,6 +688,7 @@ function updateState(state) {
   els.priceChange.className = priceChange >= 0 ? "positive" : "negative";
   setText(els.dataSource, state.market.source || "--");
   updateTickerTape(state, priceChange);
+  updateMarketCommandDeck(state);
   updateContractBoard(state, open);
   updateManualOrderPanel(state);
   updateSentimentCloud(state);

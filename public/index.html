@@ -54,6 +54,41 @@
         </article>
       </section>
 
+      <section class="market-command-deck" id="marketCommandDeck" aria-label="魏夙多源行情驾驶舱">
+        <div class="command-identity">
+          <span class="eyebrow">WEISU EVENT COMMAND</span>
+          <h2>BTCUSDT 事件合约驾驶舱</h2>
+          <p id="deckSource">TradingView 风格K线 · Binance 多源情绪 · 模拟盘风控</p>
+        </div>
+        <div class="command-signal-grid">
+          <article class="command-tile accent-cyan">
+            <span>持仓量 OI</span>
+            <strong id="deckOpenInterest">--</strong>
+            <small id="deckOpenInterestMeta">等待 Binance 永续</small>
+          </article>
+          <article class="command-tile accent-gold">
+            <span>资金费率</span>
+            <strong id="deckFunding">--</strong>
+            <small id="deckFundingMeta">等待 premiumIndex</small>
+          </article>
+          <article class="command-tile accent-green">
+            <span>多空账户</span>
+            <strong id="deckLongShort">--</strong>
+            <small id="deckLongShortMeta">等待账户比例</small>
+          </article>
+          <article class="command-tile accent-blue">
+            <span>主动买卖</span>
+            <strong id="deckTakerFlow">--</strong>
+            <small id="deckTakerFlowMeta">等待主动成交</small>
+          </article>
+          <article class="command-tile accent-red">
+            <span>执行纪律</span>
+            <strong id="deckDiscipline">WAIT</strong>
+            <small id="deckDisciplineMeta">只做模拟盘</small>
+          </article>
+        </div>
+      </section>
+
       <section class="dashboard">
         <section class="chart-panel">
           <div class="panel-head">

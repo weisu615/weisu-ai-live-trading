@@ -1,0 +1,273 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1120" viewBox="0 0 1600 1120" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="1120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#090A0C"/>
+      <stop offset="0.48" stop-color="#101318"/>
+      <stop offset="1" stop-color="#060709"/>
+    </linearGradient>
+    <linearGradient id="goldRail" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#D7A84F" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#36D6C3" stop-opacity="0.35"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#1A1F25"/>
+      <stop offset="1" stop-color="#0E1115"/>
+    </linearGradient>
+    <linearGradient id="greenGlow" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#18C47C" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#18C47C" stop-opacity="0.04"/>
+    </linearGradient>
+    <linearGradient id="redGlow" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#F05D5E" stop-opacity="0.32"/>
+      <stop offset="1" stop-color="#F05D5E" stop-opacity="0.04"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#FFFFFF" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#FFE8A8" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#000000" flood-opacity="0.42"/>
+    </filter>
+    <filter id="softGreen" x="-60%" y="-60%" width="220%" height="220%">
+      <feDropShadow dx="0" dy="0" stdDeviation="10" flood-color="#18C47C" flood-opacity="0.55"/>
+    </filter>
+    <filter id="softRed" x="-60%" y="-60%" width="220%" height="220%">
+      <feDropShadow dx="0" dy="0" stdDeviation="10" flood-color="#F05D5E" flood-opacity="0.55"/>
+    </filter>
+    <pattern id="grid" width="84" height="44" patternUnits="userSpaceOnUse">
+      <path d="M 84 0 L 0 0 0 44" stroke="#FFFFFF" stroke-opacity="0.045" stroke-width="1"/>
+    </pattern>
+    <style>
+      text { font-family: Inter, "Microsoft YaHei", Arial, sans-serif; fill: #F4F0E8; letter-spacing: 0; }
+      .muted { fill: #9BA3AD; font-size: 13px; font-weight: 700; }
+      .label { fill: #AEB6C2; font-size: 14px; font-weight: 800; }
+      .small { fill: #CBD3DD; font-size: 12px; font-weight: 700; }
+      .title { fill: #FFF7E8; font-size: 38px; font-weight: 900; }
+      .h2 { fill: #FFF0C9; font-size: 26px; font-weight: 900; }
+      .num { fill: #FFFFFF; font-size: 36px; font-weight: 900; }
+      .gold { fill: #F6D98B; }
+      .green { fill: #9EF0C6; }
+      .red { fill: #FF9CA5; }
+      .cyan { fill: #9BF5EA; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1120" fill="url(#bg)"/>
+  <rect width="1600" height="1120" fill="url(#grid)" opacity="0.72"/>
+  <path d="M0 0H1600V220C1342 198 1208 123 980 132C724 142 604 245 345 236C193 231 84 197 0 164V0Z" fill="#D7A84F" opacity="0.06"/>
+  <path d="M0 906C182 859 307 890 466 933C679 991 848 1057 1124 1011C1341 975 1472 904 1600 943V1120H0V906Z" fill="#36D6C3" opacity="0.045"/>
+
+  <g transform="translate(64 48)">
+    <rect x="0" y="0" width="1472" height="78" rx="8" fill="#0B0D10" stroke="#FFFFFF" stroke-opacity="0.1"/>
+    <rect x="20" y="15" width="48" height="48" rx="8" fill="#2A2113" stroke="#D7A84F" stroke-opacity="0.68"/>
+    <text x="36" y="49" class="gold" font-size="26" font-weight="900">W</text>
+    <text x="84" y="35" class="title">魏夙的 AI 实盘</text>
+    <text x="86" y="61" class="muted">Binance BTCUSDT 永续 · 事件合约模拟盘 · TradingView 风格行情</text>
+    <rect x="1194" y="20" width="138" height="38" rx="8" fill="#0F281F" stroke="#18C47C" stroke-opacity="0.48"/>
+    <text x="1214" y="44" class="green" font-size="13" font-weight="900">永续实盘 · 模拟账户</text>
+    <rect x="1344" y="20" width="42" height="38" rx="8" fill="#15181D" stroke="#FFFFFF" stroke-opacity="0.18"/>
+    <text x="1356" y="45" font-size="20">Ⅱ</text>
+    <rect x="1398" y="20" width="42" height="38" rx="8" fill="#15181D" stroke="#FFFFFF" stroke-opacity="0.18"/>
+    <text x="1410" y="45" class="gold" font-size="20">↯</text>
+  </g>
+
+  <g transform="translate(64 144)" filter="url(#shadow)">
+    <rect width="1472" height="42" rx="8" fill="#101012" stroke="#D7A84F" stroke-opacity="0.24"/>
+    <rect width="1472" height="42" rx="8" fill="url(#goldRail)" opacity="0.12"/>
+    <circle cx="34" cy="21" r="5" fill="#D7A84F"/>
+    <text x="52" y="26" class="gold" font-size="13" font-weight="900">BTCUSDT 事件窗口正在扫描</text>
+    <circle cx="360" cy="21" r="5" fill="#36D6C3"/>
+    <text x="378" y="26" class="cyan" font-size="13" font-weight="900">OI / 资金费率 / 多空账户 / 主动买卖已接入</text>
+    <circle cx="824" cy="21" r="5" fill="#18C47C"/>
+    <text x="842" y="26" class="green" font-size="13" font-weight="900">只做模拟，不触发真实资金</text>
+  </g>
+
+  <g transform="translate(64 208)" filter="url(#shadow)">
+    <g>
+      <rect width="352" height="126" rx="8" fill="url(#panel)" stroke="#FFFFFF" stroke-opacity="0.12"/>
+      <rect width="4" height="126" rx="2" fill="#D7A84F"/>
+      <rect x="34" y="24" width="72" height="10" rx="5" fill="#9BA3AD" opacity="0.55"/>
+      <text x="34" y="75" class="num">¥200.00</text>
+      <text x="34" y="104" class="small">27.78 USDT 可用 · 27.78 USDT 权益</text>
+    </g>
+    <g transform="translate(374 0)">
+      <rect width="352" height="126" rx="8" fill="url(#panel)" stroke="#FFFFFF" stroke-opacity="0.12"/>
+      <rect width="4" height="126" rx="2" fill="#18C47C"/>
+      <text x="34" y="33" class="label">累计收益</text>
+      <text x="34" y="75" class="num">+¥0.00</text>
+      <text x="34" y="104" class="small">+0.00 USDT · 等待样本沉淀</text>
+    </g>
+    <g transform="translate(748 0)">
+      <rect width="352" height="126" rx="8" fill="url(#panel)" stroke="#FFFFFF" stroke-opacity="0.12"/>
+      <rect width="4" height="126" rx="2" fill="#56A8F5"/>
+      <text x="34" y="33" class="label">胜率 / 笔数</text>
+      <text x="34" y="75" class="num">0%</text>
+      <text x="34" y="104" class="small">AI 0 笔 · 魏夙 0 笔 · 保存近100笔</text>
+    </g>
+    <g transform="translate(1122 0)">
+      <rect width="350" height="126" rx="8" fill="url(#panel)" stroke="#FFFFFF" stroke-opacity="0.12"/>
+      <rect width="4" height="126" rx="2" fill="#F05D5E"/>
+      <text x="34" y="33" class="label">当前周期</text>
+      <text x="34" y="75" class="num">08:42</text>
+      <text x="34" y="104" class="small">market connected · 10m/15m</text>
+    </g>
+  </g>
+
+  <g transform="translate(64 356)" filter="url(#shadow)">
+    <rect width="1472" height="184" rx="8" fill="#111418" stroke="#D7A84F" stroke-opacity="0.34"/>
+    <rect width="1472" height="184" rx="8" fill="url(#grid)" opacity="0.52"/>
+    <rect x="0" y="0" width="1472" height="184" rx="8" fill="url(#shine)" opacity="0.22"/>
+    <text x="26" y="38" class="muted">WEISU EVENT COMMAND</text>
+    <text x="26" y="76" class="h2">BTCUSDT 事件合约驾驶舱</text>
+    <text x="26" y="108" class="small">TradingView 风格K线 · Binance 多源情绪 · 模拟盘风控</text>
+    <text x="26" y="144" class="gold" font-size="13" font-weight="900">核心口径：看到胜率边际才出手，弱信号不强行下注。</text>
+
+    <g transform="translate(430 20)">
+      <g>
+        <rect width="188" height="144" rx="8" fill="#101318" stroke="#36D6C3" stroke-opacity="0.35"/>
+        <rect width="3" height="144" fill="#36D6C3"/>
+        <text x="18" y="31" class="label">持仓量 OI</text>
+        <text x="18" y="82" class="cyan" font-size="28" font-weight="900">100.7K BTC</text>
+        <text x="18" y="121" class="small">5m OI +0.18%</text>
+      </g>
+      <g transform="translate(204 0)">
+        <rect width="188" height="144" rx="8" fill="#101318" stroke="#D7A84F" stroke-opacity="0.35"/>
+        <rect width="3" height="144" fill="#D7A84F"/>
+        <text x="18" y="31" class="label">资金费率</text>
+        <text x="18" y="82" class="gold" font-size="28" font-weight="900">0.0008%</text>
+        <text x="18" y="121" class="small">下次 16:00 UTC</text>
+      </g>
+      <g transform="translate(408 0)">
+        <rect width="188" height="144" rx="8" fill="#101318" stroke="#18C47C" stroke-opacity="0.35"/>
+        <rect width="3" height="144" fill="#18C47C"/>
+        <text x="18" y="31" class="label">多空账户</text>
+        <text x="18" y="82" class="green" font-size="28" font-weight="900">2.17x</text>
+        <text x="18" y="121" class="small">多 68% / 空 32%</text>
+      </g>
+      <g transform="translate(612 0)">
+        <rect width="188" height="144" rx="8" fill="#101318" stroke="#56A8F5" stroke-opacity="0.35"/>
+        <rect width="3" height="144" fill="#56A8F5"/>
+        <text x="18" y="31" class="label">主动买卖</text>
+        <text x="18" y="82" class="cyan" font-size="28" font-weight="900">1.26x</text>
+        <text x="18" y="121" class="small">买量强于卖量</text>
+      </g>
+      <g transform="translate(816 0)">
+        <rect width="188" height="144" rx="8" fill="#101318" stroke="#F05D5E" stroke-opacity="0.35"/>
+        <rect width="3" height="144" fill="#F05D5E"/>
+        <text x="18" y="31" class="label">执行纪律</text>
+        <text x="18" y="82" class="gold" font-size="28" font-weight="900">SCANNING</text>
+        <text x="18" y="121" class="small">只打高胜率</text>
+      </g>
+    </g>
+  </g>
+
+  <g transform="translate(64 562)">
+    <g filter="url(#shadow)">
+      <rect width="1030" height="500" rx="8" fill="#0D1014" stroke="#FFFFFF" stroke-opacity="0.12"/>
+      <text x="24" y="34" class="label">BTCUSDT 永续 · TradingView 风格 K线</text>
+      <text x="24" y="76" class="num">$70,842.30</text>
+      <text x="900" y="36" class="green" font-size="14" font-weight="900">+0.214%</text>
+      <text x="842" y="64" class="small">Binance connected</text>
+      <g transform="translate(24 96)">
+        <rect width="48" height="32" rx="8" fill="#15191F" stroke="#FFFFFF" stroke-opacity="0.15"/>
+        <text x="14" y="21" class="small">1m</text>
+        <rect x="58" width="48" height="32" rx="8" fill="#15191F" stroke="#FFFFFF" stroke-opacity="0.15"/>
+        <text x="72" y="21" class="small">5m</text>
+        <rect x="116" width="58" height="32" rx="8" fill="#2B2417" stroke="#D7A84F" stroke-opacity="0.68"/>
+        <text x="132" y="21" class="gold" font-size="13" font-weight="900">10m</text>
+        <rect x="184" width="58" height="32" rx="8" fill="#15191F" stroke="#FFFFFF" stroke-opacity="0.15"/>
+        <text x="200" y="21" class="small">15m</text>
+        <rect x="252" width="58" height="32" rx="8" fill="#15191F" stroke="#FFFFFF" stroke-opacity="0.15"/>
+        <text x="268" y="21" class="small">30m</text>
+        <rect x="320" width="48" height="32" rx="8" fill="#15191F" stroke="#FFFFFF" stroke-opacity="0.15"/>
+        <text x="334" y="21" class="small">1h</text>
+        <rect x="830" y="11" width="150" height="10" rx="5" fill="#3D4650"/>
+        <circle cx="960" cy="16" r="8" fill="#D7A84F"/>
+      </g>
+      <rect x="24" y="146" width="982" height="286" rx="8" fill="#0B0F13" stroke="#FFFFFF" stroke-opacity="0.09"/>
+      <g transform="translate(24 146)" opacity="0.8">
+        <path d="M0 57H982M0 114H982M0 171H982M0 228H982" stroke="#FFFFFF" stroke-opacity="0.06"/>
+        <path d="M84 0V286M168 0V286M252 0V286M336 0V286M420 0V286M504 0V286M588 0V286M672 0V286M756 0V286M840 0V286M924 0V286" stroke="#FFFFFF" stroke-opacity="0.04"/>
+      </g>
+      <g transform="translate(80 180)">
+        <line x1="0" y1="28" x2="0" y2="112" stroke="#18C47C" stroke-width="2"/>
+        <rect x="-10" y="48" width="20" height="44" fill="#18C47C"/>
+        <line x1="46" y1="16" x2="46" y2="136" stroke="#F05D5E" stroke-width="2"/>
+        <rect x="36" y="38" width="20" height="78" fill="#F05D5E"/>
+        <line x1="92" y1="94" x2="92" y2="164" stroke="#F05D5E" stroke-width="2"/>
+        <rect x="82" y="112" width="20" height="34" fill="#F05D5E"/>
+        <line x1="138" y1="126" x2="138" y2="218" stroke="#F05D5E" stroke-width="2"/>
+        <rect x="128" y="144" width="20" height="72" fill="#F05D5E"/>
+        <line x1="184" y1="98" x2="184" y2="214" stroke="#18C47C" stroke-width="2"/>
+        <rect x="174" y="142" width="20" height="68" fill="#18C47C"/>
+        <line x1="230" y1="62" x2="230" y2="118" stroke="#18C47C" stroke-width="2"/>
+        <rect x="220" y="88" width="20" height="34" fill="#18C47C"/>
+        <line x1="276" y1="84" x2="276" y2="138" stroke="#F05D5E" stroke-width="2"/>
+        <rect x="266" y="88" width="20" height="48" fill="#F05D5E"/>
+        <line x1="322" y1="86" x2="322" y2="142" stroke="#18C47C" stroke-width="2"/>
+        <rect x="312" y="96" width="20" height="36" fill="#18C47C"/>
+        <line x1="368" y1="88" x2="368" y2="148" stroke="#F05D5E" stroke-width="2"/>
+        <rect x="358" y="104" width="20" height="42" fill="#F05D5E"/>
+        <line x1="414" y1="120" x2="414" y2="182" stroke="#18C47C" stroke-width="2"/>
+        <rect x="404" y="130" width="20" height="44" fill="#18C47C"/>
+        <line x1="460" y1="142" x2="460" y2="204" stroke="#18C47C" stroke-width="2"/>
+        <rect x="450" y="156" width="20" height="36" fill="#18C47C"/>
+        <line x1="506" y1="138" x2="506" y2="216" stroke="#F05D5E" stroke-width="2"/>
+        <rect x="496" y="158" width="20" height="48" fill="#F05D5E"/>
+        <line x1="552" y1="124" x2="552" y2="188" stroke="#F05D5E" stroke-width="2"/>
+        <rect x="542" y="146" width="20" height="38" fill="#F05D5E"/>
+      </g>
+      <path d="M24 360H1006" stroke="#D7A84F" stroke-opacity="0.68" stroke-dasharray="6 8"/>
+      <g transform="translate(626 206)">
+        <rect x="0" y="0" width="70" height="28" rx="8" fill="#132B25" stroke="#18C47C" stroke-opacity="0.7"/>
+        <text x="10" y="19" class="green" font-size="12" font-weight="900">涨 5.9U</text>
+        <path d="M36 30L50 54H22L36 30Z" fill="#36D6C3"/>
+      </g>
+      <g transform="translate(700 268)">
+        <rect x="0" y="0" width="70" height="28" rx="8" fill="#2B1919" stroke="#F05D5E" stroke-opacity="0.7"/>
+        <text x="10" y="19" class="red" font-size="12" font-weight="900">跌 6.1U</text>
+        <path d="M36 54L22 30H50L36 54Z" fill="#F05D5E"/>
+      </g>
+      <rect x="24" y="448" width="982" height="28" rx="8" fill="#151A20" stroke="#FFFFFF" stroke-opacity="0.08"/>
+      <path d="M36 464C112 456 186 466 262 458C370 446 446 474 542 462C646 449 706 454 804 460C884 465 940 458 994 452" stroke="#D7A84F" stroke-width="2" opacity="0.82"/>
+    </g>
+
+    <g transform="translate(1050 0)" filter="url(#shadow)">
+      <rect width="422" height="500" rx="8" fill="#111418" stroke="#FFFFFF" stroke-opacity="0.12"/>
+      <text x="22" y="34" class="muted">AI Position</text>
+      <circle cx="390" cy="28" r="8" fill="#18C47C" filter="url(#softGreen)"/>
+      <text x="22" y="75" class="h2">等待信号</text>
+      <g transform="translate(22 100)">
+        <rect width="178" height="84" rx="8" fill="url(#greenGlow)" stroke="#18C47C" stroke-opacity="0.45"/>
+        <text x="18" y="28" class="small">买涨</text>
+        <text x="18" y="63" class="green" font-size="30" font-weight="900">WAIT</text>
+        <rect x="200" width="178" height="84" rx="8" fill="url(#redGlow)" stroke="#F05D5E" stroke-opacity="0.45"/>
+        <text x="218" y="28" class="small">买跌</text>
+        <text x="218" y="63" class="red" font-size="30" font-weight="900">LIVE</text>
+      </g>
+      <g transform="translate(22 204)">
+        <rect width="378" height="60" rx="8" fill="#191E23" stroke="#D7A84F" stroke-opacity="0.28"/>
+        <text x="18" y="23" class="small">信号强度</text>
+        <text x="18" y="46" class="gold" font-size="18" font-weight="900">61% LIVE · 赔率回报 +82%</text>
+        <rect y="74" width="378" height="60" rx="8" fill="#191E23" stroke="#FFFFFF" stroke-opacity="0.1"/>
+        <text x="18" y="97" class="small">执行纪律</text>
+        <text x="18" y="120" class="gold" font-size="18" font-weight="900">10m 到期结算</text>
+      </g>
+      <g transform="translate(22 362)">
+        <rect width="178" height="58" rx="8" fill="#151A20" stroke="#FFFFFF" stroke-opacity="0.1"/>
+        <text x="18" y="24" class="small">当前票据</text>
+        <text x="18" y="45" class="gold" font-size="17" font-weight="900">等待信号</text>
+        <rect x="200" width="178" height="58" rx="8" fill="#151A20" stroke="#FFFFFF" stroke-opacity="0.1"/>
+        <text x="218" y="24" class="small">投入</text>
+        <text x="218" y="45" class="gold" font-size="17" font-weight="900">最低 5.00U</text>
+        <rect y="72" width="378" height="56" rx="8" fill="#151A20" stroke="#36D6C3" stroke-opacity="0.28"/>
+        <text x="18" y="105" class="cyan" font-size="15" font-weight="900">魏夙手动下单 · 买涨 / 买跌 · 可输入投入金额</text>
+      </g>
+    </g>
+  </g>
+
+  <g transform="translate(64 1084)">
+    <text x="0" y="0" class="muted">设计稿说明：顶部驾驶舱用于合成 OI、资金费率、多空账户、主动买卖、执行纪律；中部保留 TradingView 风格 K 线与事件合约票据；底部真实网页继续接策略实验室、情绪云图和 AI/魏夙分离复盘。</text>
+  </g>
+</svg>
