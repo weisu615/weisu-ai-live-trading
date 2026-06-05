@@ -9,12 +9,13 @@ function read(relativePath) {
   return fs.readFileSync(path.join(root, relativePath), "utf8");
 }
 
-test("frontend exposes a TradingView-style chart with canvas fallback", () => {
+test("frontend exposes a TradingView-style chart with local canvas fallback", () => {
   const html = read("public/index.html");
   const app = read("public/app.js");
   const css = read("public/styles.css");
 
-  assert.match(html, /lightweight-charts/, "page should load TradingView Lightweight Charts");
+  assert.match(html, /\/vendor\/lightweight-charts\.standalone\.production\.js/, "page should load the local TradingView Lightweight Charts bundle");
+  assert.doesNotMatch(html, /unpkg\.com|cdn\.jsdelivr|cdnjs/, "page should not depend on overseas chart CDNs");
   assert.match(html, /id="tvKlineChart"/, "page should expose a dedicated TradingView chart container");
   assert.match(app, /initTradingViewChart/, "frontend should initialize the TradingView-style chart");
   assert.match(app, /renderTradingViewChart/, "frontend should render candles through the TradingView-style chart");
@@ -22,24 +23,31 @@ test("frontend exposes a TradingView-style chart with canvas fallback", () => {
   assert.match(css, /\.tv-chart-wrap\.tv-ready\s+#klineCanvas/, "CSS should hide canvas only after TradingView chart is ready");
 });
 
-test("backend fetches and publishes multi-source Binance futures sentiment", () => {
+test("backend publishes event-contract pulse data for binary tickets", () => {
   const server = read("server.js");
 
-  assert.match(server, /sentiment:\s*createInitialSentiment\(\)/, "market state should carry sentiment data");
-  assert.match(server, /fetchMarketSentimentFromBinance/, "server should fetch multi-source Binance sentiment");
-  assert.match(server, /\/fapi\/v1\/openInterest/, "sentiment should include current open interest");
-  assert.match(server, /\/fapi\/v1\/premiumIndex/, "sentiment should include current funding/premium data");
-  assert.match(server, /\/futures\/data\/globalLongShortAccountRatio/, "sentiment should include global long/short account ratio");
-  assert.match(server, /\/futures\/data\/takerlongshortRatio/, "sentiment should include taker buy/sell flow");
-  assert.match(server, /state\.market\.sentiment\s*=\s*sentiment/, "refresh should publish sentiment without replacing K-lines");
+  assert.match(server, /eventPulseBoard:\s*buildEventPulseBoard\(\)/, "public state should expose event-contract pulse data");
+  assert.match(server, /function buildEventPulseBoard/, "server should build a dedicated event-contract pulse board");
+  assert.match(server, /callProbability/, "pulse board should publish buy-up probability");
+  assert.match(server, /putProbability/, "pulse board should publish buy-down probability");
+  assert.match(server, /payoutRate:\s*CONFIG\.payoutRate/, "pulse board should expose simulated payout rate");
 });
 
-test("sentiment cloud uses live multi-source fields instead of placeholders", () => {
-  const server = read("server.js");
+test("chart panel stays compact when the side rail grows", () => {
+  const css = read("public/styles.css");
 
-  assert.match(server, /marketSentiment\.openInterest/, "cloud should read open interest");
-  assert.match(server, /marketSentiment\.funding/, "cloud should read funding");
-  assert.match(server, /marketSentiment\.longShort/, "cloud should read long/short ratio");
-  assert.match(server, /marketSentiment\.takerFlow/, "cloud should read taker flow");
-  assert.doesNotMatch(server, /label:\s*"持仓量 OI"[\s\S]{0,160}value:\s*"待接入"/, "OI should no longer be a hard-coded placeholder");
+  assert.match(css, /\.dashboard\s*{[\s\S]*align-items:\s*start;/, "dashboard rows should not stretch the chart panel to match the side rail");
+  assert.match(css, /\.chart-panel\s*{[\s\S]*min-height:\s*auto;/, "chart panel should not create a large empty block under the overview");
+  assert.match(css, /\.chart-wrap\s*{[\s\S]*height:\s*clamp\(420px,\s*52vh,\s*620px\)/, "main K-line chart should have a stable responsive height");
+});
+
+test("event-contract pulse board avoids ordinary futures position metrics", () => {
+  const server = read("server.js");
+  const app = read("public/app.js");
+  const html = read("public/index.html");
+
+  assert.doesNotMatch(server, /eventPulseBoard:\s*buildSentimentCloud\(\)/, "public state should not expose the old sentiment cloud");
+  assert.doesNotMatch(server, /fetchMarketSentimentFromBinance|\/fapi\/v1\/openInterest|\/fapi\/v1\/premiumIndex|globalLongShortAccountRatio|takerlongshortRatio|openInterestHist|\/fapi\/v1\/depth/, "server should not fetch ordinary futures sentiment endpoints for event contracts");
+  assert.doesNotMatch(app, /sentimentCloud|updateSentimentCloud|updateMarketCommandDeck/, "frontend should render event-contract modules only");
+  assert.doesNotMatch(html, /情绪云图|持仓量|资金费率|多空账户|主动买卖|盘口厚度|\bOI\b/, "page copy should stay centered on event contracts");
 });

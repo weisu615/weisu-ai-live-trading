@@ -54,37 +54,37 @@
         </article>
       </section>
 
-      <section class="market-command-deck" id="marketCommandDeck" aria-label="魏夙多源行情驾驶舱">
-        <div class="command-identity">
-          <span class="eyebrow">WEISU EVENT COMMAND</span>
-          <h2>BTCUSDT 事件合约驾驶舱</h2>
-          <p id="deckSource">TradingView 风格K线 · Binance 多源情绪 · 模拟盘风控</p>
+      <section class="event-contract-desk" id="eventContractDesk" aria-label="魏夙事件合约票据台">
+        <div class="event-desk-identity">
+          <span class="eyebrow">WEISU BINARY EVENT DESK</span>
+          <h2>只判断下一张票：买涨还是买跌</h2>
+          <p id="eventDeskNote">10m / 15m 到期结算 · 只显示事件合约胜率 · 模拟盘不触发真实资金</p>
         </div>
-        <div class="command-signal-grid">
-          <article class="command-tile accent-cyan">
-            <span>持仓量 OI</span>
-            <strong id="deckOpenInterest">--</strong>
-            <small id="deckOpenInterestMeta">等待 Binance 永续</small>
+        <div class="event-ticket-strip">
+          <article class="event-desk-tile accent-gold">
+            <span>当前胜率</span>
+            <strong id="eventWinRate">--</strong>
+            <small id="eventWinRateMeta">等待真实K线信号</small>
           </article>
-          <article class="command-tile accent-gold">
-            <span>资金费率</span>
-            <strong id="deckFunding">--</strong>
-            <small id="deckFundingMeta">等待 premiumIndex</small>
+          <article class="event-desk-tile accent-green">
+            <span>买涨胜率</span>
+            <strong id="eventCallProbability">--</strong>
+            <small id="eventCallMeta">收盘高于入场价才赢</small>
           </article>
-          <article class="command-tile accent-green">
-            <span>多空账户</span>
-            <strong id="deckLongShort">--</strong>
-            <small id="deckLongShortMeta">等待账户比例</small>
+          <article class="event-desk-tile accent-red">
+            <span>买跌胜率</span>
+            <strong id="eventPutProbability">--</strong>
+            <small id="eventPutMeta">收盘低于入场价才赢</small>
           </article>
-          <article class="command-tile accent-blue">
-            <span>主动买卖</span>
-            <strong id="deckTakerFlow">--</strong>
-            <small id="deckTakerFlowMeta">等待主动成交</small>
+          <article class="event-desk-tile accent-blue">
+            <span>模拟赔率</span>
+            <strong id="eventPayout">--</strong>
+            <small id="eventPayoutMeta">赢单按模拟回报结算</small>
           </article>
-          <article class="command-tile accent-red">
-            <span>执行纪律</span>
-            <strong id="deckDiscipline">WAIT</strong>
-            <small id="deckDisciplineMeta">只做模拟盘</small>
+          <article class="event-desk-tile accent-cyan">
+            <span>到期窗口</span>
+            <strong id="eventExpiryMode">10m/15m</strong>
+            <small id="eventExpiryMeta">按票据时间结算</small>
           </article>
         </div>
       </section>
@@ -153,7 +153,7 @@
         <aside class="side-panel">
           <div class="panel-head compact">
             <div>
-              <span class="eyebrow">AI Position</span>
+              <span class="eyebrow">AI Ticket</span>
               <h2 id="positionTitle">等待信号</h2>
             </div>
             <span class="status-dot" id="statusDot"></span>
@@ -272,7 +272,7 @@
               <dd id="entryPrice">--</dd>
             </div>
             <div>
-              <dt>仓位</dt>
+              <dt>投入</dt>
               <dd id="stake">--</dd>
             </div>
             <div>
@@ -283,7 +283,7 @@
           <div class="ai-note" id="aiNote">系统启动中。</div>
           <div class="risk-strip">
             <div>
-              <span>敞口</span>
+              <span>锁定投入</span>
               <strong id="exposure">--</strong>
             </div>
             <div>
@@ -298,17 +298,17 @@
         </aside>
       </section>
 
-      <section class="intelligence-grid" aria-label="策略实验室与情绪云图">
-        <section class="intelligence-panel sentiment-desk">
+      <section class="intelligence-grid" aria-label="策略实验室与事件脉冲">
+        <section class="intelligence-panel event-pulse-panel">
           <div class="panel-head">
             <div>
-              <span class="eyebrow">WeiSu Sentiment Cloud</span>
-              <h2>魏夙情绪云图</h2>
+              <span class="eyebrow">WeiSu Event Pulse</span>
+              <h2>事件合约脉冲板</h2>
             </div>
-            <span class="status-pill subtle">多源预留 · 不造假数据</span>
+            <span class="status-pill subtle">只看涨跌胜率 · 不看偏题数据</span>
           </div>
-          <div class="sentiment-cloud" id="sentimentCloud">
-            <div class="sentiment-empty">等待 Binance 永续行情</div>
+          <div class="event-pulse-board" id="eventPulseBoard">
+            <div class="event-pulse-empty">等待 Binance 永续K线</div>
           </div>
         </section>
 
@@ -406,7 +406,7 @@
       <section class="reset-modal" role="dialog" aria-modal="true" aria-labelledby="resetConfirmTitle">
         <span class="modal-kicker">DANGER CONTROL</span>
         <h2 id="resetConfirmTitle">确认重置模拟盘？</h2>
-        <p>这会清空账户收益、历史订单、复盘记录和当前持仓。确认后自动化会暂停，不会立刻下单；需要你手动点播放恢复扫描。</p>
+        <p>这会清空账户收益、历史订单、复盘记录和当前票据。确认后自动化会暂停，不会立刻下单；需要你手动点播放恢复扫描。</p>
         <div class="modal-actions">
           <button class="ghost-button" id="cancelReset" type="button">取消</button>
           <button class="danger-button" id="confirmReset" type="button">确认重置并暂停</button>
@@ -414,7 +414,7 @@
       </section>
     </div>
 
-    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+    <script src="/vendor/lightweight-charts.standalone.production.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>

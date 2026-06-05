@@ -56,8 +56,8 @@ test("frontend renders independent AI and user review ledgers", () => {
 test("ai settlement summaries include market-context-specific diagnostics", () => {
   const server = read("server.js");
 
-  assert.match(server, /buildTradeSummaryV3/, "server should route AI settlement summaries through the richer v3 formatter");
+  assert.match(server, /buildTradeSummaryV4/, "server should route AI settlement summaries through the richer v4 formatter");
   assert.match(server, /到期窗口兑现/, "AI settlement summaries should mention event-window realization quality");
   assert.match(server, /过热追多|过冷追空/, "AI settlement summaries should record RSI-driven failure adjustments");
-  assert.match(server, /量能和短动量都偏薄/, "AI settlement summaries should identify thin-flow failure cases");
+  assert.match(server, /量能和短动量都没真正打开/, "AI settlement summaries should identify thin-flow failure cases");
 });

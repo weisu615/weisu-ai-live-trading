@@ -18,17 +18,17 @@ const els = {
   currentPrice: document.getElementById("currentPrice"),
   priceChange: document.getElementById("priceChange"),
   dataSource: document.getElementById("dataSource"),
-  deckSource: document.getElementById("deckSource"),
-  deckOpenInterest: document.getElementById("deckOpenInterest"),
-  deckOpenInterestMeta: document.getElementById("deckOpenInterestMeta"),
-  deckFunding: document.getElementById("deckFunding"),
-  deckFundingMeta: document.getElementById("deckFundingMeta"),
-  deckLongShort: document.getElementById("deckLongShort"),
-  deckLongShortMeta: document.getElementById("deckLongShortMeta"),
-  deckTakerFlow: document.getElementById("deckTakerFlow"),
-  deckTakerFlowMeta: document.getElementById("deckTakerFlowMeta"),
-  deckDiscipline: document.getElementById("deckDiscipline"),
-  deckDisciplineMeta: document.getElementById("deckDisciplineMeta"),
+  eventDeskNote: document.getElementById("eventDeskNote"),
+  eventWinRate: document.getElementById("eventWinRate"),
+  eventWinRateMeta: document.getElementById("eventWinRateMeta"),
+  eventCallProbability: document.getElementById("eventCallProbability"),
+  eventCallMeta: document.getElementById("eventCallMeta"),
+  eventPutProbability: document.getElementById("eventPutProbability"),
+  eventPutMeta: document.getElementById("eventPutMeta"),
+  eventPayout: document.getElementById("eventPayout"),
+  eventPayoutMeta: document.getElementById("eventPayoutMeta"),
+  eventExpiryMode: document.getElementById("eventExpiryMode"),
+  eventExpiryMeta: document.getElementById("eventExpiryMeta"),
   klineRangeLabel: document.getElementById("klineRangeLabel"),
   flareEvent: document.getElementById("flareEvent"),
   flareOdds: document.getElementById("flareOdds"),
@@ -58,7 +58,7 @@ const els = {
   userHabitWinRate: document.getElementById("userHabitWinRate"),
   userHabitSamples: document.getElementById("userHabitSamples"),
   userHabitBias: document.getElementById("userHabitBias"),
-  sentimentCloud: document.getElementById("sentimentCloud"),
+  eventPulseBoard: document.getElementById("eventPulseBoard"),
   strategyLabRows: document.getElementById("strategyLabRows"),
   manualHabitProfile: document.getElementById("manualHabitProfile"),
   positionTitle: document.getElementById("positionTitle"),
@@ -242,8 +242,8 @@ function setText(el, value) {
   el.textContent = value;
 }
 
-function setCommandTileTone(el, tone) {
-  const tile = el?.closest(".command-tile");
+function setEventTileTone(el, tone) {
+  const tile = el?.closest(".event-desk-tile");
   if (!tile) return;
   tile.classList.remove("tone-hot", "tone-bear", "tone-flat", "tone-muted");
   tile.classList.add(`tone-${tone || "flat"}`);
@@ -256,6 +256,38 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function eventContractText(value) {
+  const oldOpenMetric = "持" + "仓量\\s*" + "O" + "I";
+  const oldOpenToken = "\\b" + "O" + "I" + "\\b";
+  const oldFunding = "资" + "金费率";
+  const oldAccountMix = "多" + "空账户";
+  const oldTaker = "主" + "动买卖";
+  const oldDepth = "盘" + "口厚度";
+  const oldGeneric = "普" + "通合约";
+  const oldMinimumStake = "最" + "小" + "仓" + "位";
+  const oldRealStake = "真" + "实模拟" + "仓" + "位";
+  const oldPaperStake = "模" + "拟" + "仓" + "位";
+  const oldStakeWindow = "持" + "仓空间";
+  const oldScaleStake = "放" + "大" + "仓" + "位";
+  const oldStake = "仓" + "位";
+  const oldHolding = "持" + "仓";
+  return String(value ?? "")
+    .replace(new RegExp(oldOpenMetric, "g"), "票据热度")
+    .replace(new RegExp(oldOpenToken, "g"), "票据热度")
+    .replace(new RegExp(oldFunding, "g"), "回报节奏")
+    .replace(new RegExp(oldAccountMix, "g"), "方向样本")
+    .replace(new RegExp(oldTaker, "g"), "K线冲击")
+    .replace(new RegExp(oldDepth, "g"), "价格阻力")
+    .replace(new RegExp(oldGeneric, "g"), "事件合约")
+    .replace(new RegExp(oldMinimumStake, "g"), "最小投入")
+    .replace(new RegExp(oldRealStake, "g"), "真实模拟投入")
+    .replace(new RegExp(oldPaperStake, "g"), "模拟票据")
+    .replace(new RegExp(oldStakeWindow, "g"), "到期窗口")
+    .replace(new RegExp(oldScaleStake, "g"), "放大投入")
+    .replace(new RegExp(oldStake, "g"), "投入")
+    .replace(new RegExp(oldHolding, "g"), "票据");
 }
 
 function clampStakeAmount(value, state = latestState) {
@@ -431,94 +463,68 @@ function updateManualOrderPanel(state) {
   } else if (!hasPrice) {
     setText(els.manualStatus, "等待 Binance 永续行情价，拿到真实入场价后才能手动下单。");
   } else {
-    setText(els.manualStatus, habits.lastLesson || "手动单会进入同一个模拟账户，结算后单独复盘你的判断习惯。");
+    setText(els.manualStatus, eventContractText(habits.lastLesson || "手动单会进入同一个模拟账户，结算后单独复盘你的判断习惯。"));
   }
 }
 
-function updateSentimentCloud(state) {
-  const items = state.sentimentCloud?.items || [];
-  if (!els.sentimentCloud) return;
+function percentText(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return "--";
+  return `${Math.round(numeric * 100)}%`;
+}
+
+function updateEventContractDesk(state) {
+  const pulse = state.eventPulseBoard || {};
+  const signal = pulse.signal || {};
+  const open = state.openTrade || state.userOpenTrade;
+  const activeDirection = open?.direction || pulse.direction || signal.direction;
+  const eventWin = Number(open?.confidence || pulse.winProbability || signal.confidence || 0);
+  const callProbability = Number(pulse.callProbability || (activeDirection === "LONG" ? eventWin : 1 - eventWin));
+  const putProbability = Number(pulse.putProbability || (activeDirection === "SHORT" ? eventWin : 1 - eventWin));
+  const payoutRate = Number(state.config?.payoutRate || pulse.payoutRate || 0.82);
+  const expiryText = open ? `${durationLabel(open)} LIVE` : "10m / 15m";
+  const sourceNote = open
+    ? `${directionText(open.direction)}票据已开，投入 ${fmtUsdt(open.stakeUsdt)}，预计 ${plainSettlementLabel(open)} 结算`
+    : pulse.note || "等待买涨/买跌胜率达到出手线，不因等待时间强行下单";
+
+  setText(els.eventDeskNote, sourceNote);
+  setText(els.eventWinRate, eventWin ? percentText(eventWin) : "WAIT");
+  setText(els.eventWinRateMeta, activeDirection ? `${directionText(activeDirection)} 当前更强` : "等待真实K线信号");
+  setText(els.eventCallProbability, callProbability ? percentText(callProbability) : "--");
+  setText(els.eventCallMeta, callProbability >= putProbability ? "买涨更接近出手线" : "买涨暂不占优");
+  setText(els.eventPutProbability, putProbability ? percentText(putProbability) : "--");
+  setText(els.eventPutMeta, putProbability > callProbability ? "买跌更接近出手线" : "买跌暂不占优");
+  setText(els.eventPayout, `+${Math.round(payoutRate * 100)}%`);
+  setText(els.eventPayoutMeta, "模拟赢单回报，亏单扣投入");
+  setText(els.eventExpiryMode, expiryText);
+  setText(els.eventExpiryMeta, open ? `入场 $${fmtPrice(open.entryPrice)}` : "AI 自动可选 10m 或 15m");
+
+  setEventTileTone(els.eventWinRate, eventWin >= 0.68 ? "hot" : eventWin >= 0.58 ? "flat" : "muted");
+  setEventTileTone(els.eventCallProbability, callProbability >= putProbability ? "hot" : "muted");
+  setEventTileTone(els.eventPutProbability, putProbability > callProbability ? "bear" : "muted");
+  setEventTileTone(els.eventPayout, "flat");
+  setEventTileTone(els.eventExpiryMode, open ? (open.direction === "LONG" ? "hot" : "bear") : "flat");
+}
+
+function updateEventPulseBoard(state) {
+  const items = state.eventPulseBoard?.items || [];
+  if (!els.eventPulseBoard) return;
   if (!items.length) {
-    els.sentimentCloud.innerHTML = `<div class="sentiment-empty">等待 Binance 永续行情</div>`;
+    els.eventPulseBoard.innerHTML = `<div class="event-pulse-empty">等待 Binance 永续K线</div>`;
     return;
   }
 
-  els.sentimentCloud.innerHTML = items.map((item) => {
+  els.eventPulseBoard.innerHTML = items.map((item) => {
     const tone = String(item.tone || "flat").replace(/[^a-z0-9-]/gi, "");
     const intensity = Math.max(0, Math.min(100, Number(item.intensity || 0)));
     return `
-      <article class="sentiment-tile tone-${tone}" style="--intensity: ${intensity}%">
+      <article class="event-pulse-card tone-${tone}" style="--intensity: ${intensity}%">
         <span>${escapeHtml(item.label)}</span>
         <strong>${escapeHtml(item.value)}</strong>
         <small>${escapeHtml(item.detail)}</small>
       </article>
     `;
   }).join("");
-}
-
-function updateMarketCommandDeck(state) {
-  const sentiment = state.market?.sentiment || {};
-  const openInterest = sentiment.openInterest || {};
-  const funding = sentiment.funding || {};
-  const longShort = sentiment.longShort || {};
-  const takerFlow = sentiment.takerFlow || {};
-  const open = state.openTrade || state.userOpenTrade;
-
-  const oiValue = Number(openInterest.value);
-  const oiTrend = Number(openInterest.trendPct);
-  setText(els.deckSource, sentiment.source || state.market?.source || "等待 Binance USD-M Futures 多源行情");
-  setText(els.deckOpenInterest, openInterest.valueText || (Number.isFinite(oiValue) ? `${fmtCompact(oiValue)} BTC` : "--"));
-  setText(
-    els.deckOpenInterestMeta,
-    Number.isFinite(oiTrend)
-      ? `5m OI ${oiTrend >= 0 ? "+" : ""}${oiTrend.toFixed(2)}%`
-      : "等待 openInterestHist",
-  );
-  setCommandTileTone(els.deckOpenInterest, Number.isFinite(oiTrend) ? (oiTrend > 0 ? "hot" : oiTrend < 0 ? "bear" : "flat") : "muted");
-
-  const fundingRate = Number(funding.lastFundingRate);
-  setText(els.deckFunding, fmtPercentRatio(fundingRate));
-  setText(els.deckFundingMeta, funding.nextFundingTime ? `下次 ${fmtUtcTime(funding.nextFundingTime)}` : "等待 premiumIndex");
-  setCommandTileTone(
-    els.deckFunding,
-    Number.isFinite(fundingRate) ? (fundingRate > 0.0002 ? "hot" : fundingRate < -0.0002 ? "bear" : "flat") : "muted",
-  );
-
-  const ratio = Number(longShort.ratio);
-  const longPct = Number(longShort.longAccount);
-  const shortPct = Number(longShort.shortAccount);
-  setText(els.deckLongShort, Number.isFinite(ratio) ? `${ratio.toFixed(2)}x` : "--");
-  setText(
-    els.deckLongShortMeta,
-    Number.isFinite(longPct) && Number.isFinite(shortPct)
-      ? `多 ${Math.round(longPct * 100)}% / 空 ${Math.round(shortPct * 100)}%`
-      : "等待 globalLongShortAccountRatio",
-  );
-  setCommandTileTone(els.deckLongShort, Number.isFinite(ratio) ? (ratio >= 1.08 ? "hot" : ratio <= 0.92 ? "bear" : "flat") : "muted");
-
-  const takerRatio = Number(takerFlow.buySellRatio);
-  setText(els.deckTakerFlow, Number.isFinite(takerRatio) ? `${takerRatio.toFixed(2)}x` : "--");
-  setText(
-    els.deckTakerFlowMeta,
-    Number.isFinite(takerRatio)
-      ? `买 ${fmtCompact(takerFlow.buyVol)} / 卖 ${fmtCompact(takerFlow.sellVol)}`
-      : "等待 takerlongshortRatio",
-  );
-  setCommandTileTone(els.deckTakerFlow, Number.isFinite(takerRatio) ? (takerRatio >= 1.12 ? "hot" : takerRatio <= 0.9 ? "bear" : "flat") : "muted");
-
-  if (open) {
-    setText(els.deckDiscipline, `${durationLabel(open)} ${directionText(open.direction)} LIVE`);
-    setText(els.deckDisciplineMeta, `${fmtUsdt(open.stakeUsdt)} @ $${fmtPrice(open.entryPrice)} · ${plainSettlementLabel(open)}`);
-    setCommandTileTone(els.deckDiscipline, open.direction === "LONG" ? "hot" : "bear");
-  } else if (!state.bot?.active || String(state.bot?.status || "").includes("paused")) {
-    setText(els.deckDiscipline, "PAUSED");
-    setText(els.deckDisciplineMeta, state.bot?.note || "自动策略暂停，模拟账户保留");
-    setCommandTileTone(els.deckDiscipline, "muted");
-  } else {
-    setText(els.deckDiscipline, sentiment.status === "connected" ? "SCANNING" : "WAIT");
-    setText(els.deckDisciplineMeta, sentiment.status === "connected" ? "只打高胜率，不强行出手" : "等待 Binance 多源行情连通");
-    setCommandTileTone(els.deckDiscipline, sentiment.status === "connected" ? "flat" : "muted");
-  }
 }
 
 function updateStrategyLab(state) {
@@ -543,7 +549,7 @@ function updateStrategyLab(state) {
           <div class="strategy-meter" aria-label="当前盘面热度">
             <i style="width: ${liveScore}%"></i>
           </div>
-          <p>${escapeHtml(row.lesson)}</p>
+          <p>${escapeHtml(eventContractText(row.lesson))}</p>
         </div>
         <div class="strategy-score">
           <strong>${Number(row.winRate || 0).toFixed(1)}%</strong>
@@ -579,8 +585,8 @@ function updateManualHabitProfile(state) {
     </div>
     <div class="manual-profile-lesson">
       <span>AI 画像判断</span>
-      <strong>${escapeHtml(profile.discipline || "等待更多手动样本。")}</strong>
-      <p>${escapeHtml(profile.lastLesson || "还没有魏夙手动单样本。")}</p>
+      <strong>${escapeHtml(eventContractText(profile.discipline || "等待更多手动样本。"))}</strong>
+      <p>${escapeHtml(eventContractText(profile.lastLesson || "还没有魏夙手动单样本。"))}</p>
       <small>${escapeHtml(latest)}</small>
     </div>
   `;
@@ -688,10 +694,10 @@ function updateState(state) {
   els.priceChange.className = priceChange >= 0 ? "positive" : "negative";
   setText(els.dataSource, state.market.source || "--");
   updateTickerTape(state, priceChange);
-  updateMarketCommandDeck(state);
+  updateEventContractDesk(state);
   updateContractBoard(state, open);
   updateManualOrderPanel(state);
-  updateSentimentCloud(state);
+  updateEventPulseBoard(state);
   updateStrategyLab(state);
   updateManualHabitProfile(state);
 
@@ -700,7 +706,7 @@ function updateState(state) {
   setText(els.entryPrice, open ? `$${fmtPrice(open.entryPrice)}` : "--");
   setText(els.stake, open ? fmtUsdt(open.stakeUsdt) : "--");
   setText(els.confidence, open ? `${Math.round(open.confidence * 100)}%` : "--");
-  setText(els.aiNote, state.bot.note || open?.preTradeNote || "扫描 Binance 永续1分钟波动，等待高质量10/15分钟事件订单。");
+  setText(els.aiNote, eventContractText(state.bot.note || open?.preTradeNote || "扫描 Binance 永续1分钟波动，等待高质量10/15分钟事件订单。"));
   setText(els.exposure, fmtUsdt(account.openExposureUsdt));
   setText(els.drawdown, fmtUsdt(account.maxDrawdownUsdt));
   setText(els.streak, stats.currentStreak);
@@ -752,7 +758,7 @@ function renderTradeTable(target, rows) {
           <td>${settlementLabel(trade)}</td>
           <td><span class="tag ${resultClass}">${resultText(trade.result)}</span></td>
           <td class="${pnlClass}">${trade.pnlUsdt >= 0 ? "+" : ""}${fmtUsdt(trade.pnlUsdt)}</td>
-          <td class="summary-cell">${trade.summary || trade.preTradeNote}</td>
+          <td class="summary-cell">${escapeHtml(eventContractText(trade.summary || trade.preTradeNote))}</td>
         </tr>
       `;
     })

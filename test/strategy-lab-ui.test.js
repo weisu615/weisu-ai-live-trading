@@ -19,21 +19,24 @@ test("manual stake input is promoted with quick sizing controls", () => {
   assert.match(app, /applyStakePreset/, "frontend should wire quick stake presets into the manual stake input");
 });
 
-test("strategy lab and sentiment cloud are exposed in the UI", () => {
+test("strategy lab and event pulse board are exposed in the UI", () => {
   const html = read("public/index.html");
   const app = read("public/app.js");
 
-  assert.match(html, /id="sentimentCloud"/, "UI should include the WeiSu sentiment cloud");
+  assert.match(html, /id="eventPulseBoard"/, "UI should include the event-contract pulse board");
   assert.match(html, /id="strategyLabRows"/, "UI should include strategy lab ranking rows");
-  assert.match(app, /updateSentimentCloud/, "frontend should render sentiment cloud data from state");
+  assert.match(app, /updateEventPulseBoard/, "frontend should render event pulse data from state");
   assert.match(app, /updateStrategyLab/, "frontend should render strategy lab data from state");
+  assert.doesNotMatch(html, /情绪云图|sentimentCloud/, "event-contract UI should not label this as a generic sentiment cloud");
 });
 
 test("backend publishes shadow strategy lab data without controlling orders", () => {
   const server = read("server.js");
 
   assert.match(server, /strategyLab:\s*buildStrategyLab\(\)/, "public state should expose strategy lab data");
+  assert.match(server, /eventPulseBoard:\s*buildEventPulseBoard\(\)/, "public state should expose event-contract pulse data");
   assert.match(server, /function buildStrategyLab/, "server should build strategy lab rankings");
+  assert.match(server, /function buildEventPulseBoard/, "server should build event-contract pulse cards");
   assert.match(server, /shadowOnly:\s*true/, "strategy lab candidates should be explicitly shadow-only");
   assert.doesNotMatch(server, /strategyLab[\s\S]{0,120}openTrade\(/, "strategy lab should not directly place orders");
 });
