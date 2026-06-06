@@ -1,7 +1,6 @@
 const els = {
   modePill: document.getElementById("modePill"),
   tickerTape: document.getElementById("tickerTape"),
-  toggleBot: document.getElementById("toggleBot"),
   advanceBot: document.getElementById("advanceBot"),
   resetBot: document.getElementById("resetBot"),
   resetConfirm: document.getElementById("resetConfirm"),
@@ -617,7 +616,7 @@ function saveClientBackup(state) {
   if (!window.localStorage || !state) return;
   const hasTradeHistory = (state.trades || []).length || state.openTrade || state.userOpenTrade;
   const hasAccountHistory = Math.abs(Number(state.account?.realizedPnlUsdt || 0)) > 0.0001;
-  const resetLocked = state.bot?.manualResetAt || state.bot?.status === "paused-after-reset";
+  const resetLocked = state.bot?.manualResetAt;
   if (resetLocked && !hasTradeHistory && !hasAccountHistory) {
     clearClientBackup();
     return;
@@ -711,7 +710,6 @@ function updateState(state) {
   setText(els.drawdown, fmtUsdt(account.maxDrawdownUsdt));
   setText(els.streak, stats.currentStreak);
 
-  els.toggleBot.textContent = state.bot.active ? "⏸" : "▶";
   els.statusDot.className = "status-dot";
   if (!state.bot.active || state.bot.status.includes("paused")) els.statusDot.classList.add("paused");
   if (state.bot.status === "error") els.statusDot.classList.add("error");
@@ -1418,10 +1416,6 @@ function startAutoAdvance() {
   window.setTimeout(() => runAutoAdvance(), 2000);
   autoAdvanceTimer = setInterval(() => runAutoAdvance(), AUTO_ADVANCE_MS);
 }
-
-els.toggleBot.addEventListener("click", () => {
-  postJson("/api/control", { active: !latestState?.bot?.active });
-});
 
 els.advanceBot.addEventListener("click", () => {
   postJson("/api/advance");

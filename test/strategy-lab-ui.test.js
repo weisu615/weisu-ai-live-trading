@@ -38,6 +38,9 @@ test("backend publishes shadow strategy lab data without controlling orders", ()
   assert.match(server, /function buildStrategyLab/, "server should build strategy lab rankings");
   assert.match(server, /function buildEventPulseBoard/, "server should build event-contract pulse cards");
   assert.match(server, /shadowOnly:\s*true/, "strategy lab candidates should be explicitly shadow-only");
+  assert.match(server, /edge-retest-10m/, "strategy lab should include an event-contract retest entry");
+  assert.match(server, /expiry-compression-filter/, "strategy lab should include an expiry-window compression filter");
+  assert.match(server, /opening-burst-ticket/, "strategy lab should include an opening burst event ticket model");
   assert.doesNotMatch(server, /strategyLab[\s\S]{0,120}openTrade\(/, "strategy lab should not directly place orders");
 });
 

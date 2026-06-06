@@ -482,6 +482,9 @@ h1 {
 .dashboard {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-areas:
+    "chart side"
+    "intelligence side";
   gap: 14px;
   align-items: start;
 }
@@ -499,11 +502,13 @@ h1 {
 }
 
 .chart-panel {
+  grid-area: chart;
   min-height: auto;
   padding: 18px;
 }
 
 .side-panel {
+  grid-area: side;
   align-self: start;
   min-height: auto;
   padding: 18px;
@@ -1296,10 +1301,11 @@ h1 {
 }
 
 .intelligence-grid {
+  grid-area: intelligence;
   display: grid;
   grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
   gap: 14px;
-  margin-top: 14px;
+  margin-top: 0;
 }
 
 .intelligence-panel {
@@ -1811,6 +1817,13 @@ td.summary-cell {
     grid-template-columns: 1fr 1fr;
   }
 
+  .dashboard {
+    grid-template-areas:
+      "chart chart"
+      "side side"
+      "intelligence intelligence";
+  }
+
   .event-contract-desk {
     grid-template-columns: 1fr;
   }
@@ -1824,11 +1837,11 @@ td.summary-cell {
   }
 
   .chart-panel {
-    grid-column: 1 / -1;
+    grid-area: chart;
   }
 
   .side-panel {
-    grid-column: 1 / -1;
+    grid-area: side;
     min-height: auto;
   }
 
@@ -1860,6 +1873,13 @@ td.summary-cell {
   .position-list,
   .risk-strip {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard {
+    grid-template-areas:
+      "chart"
+      "side"
+      "intelligence";
   }
 
   .event-contract-desk {

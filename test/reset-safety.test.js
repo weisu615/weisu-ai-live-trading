@@ -17,7 +17,7 @@ test("reset button requires an explicit confirmation step", () => {
   assert.match(app, /clearClientBackup\(\)/, "client backup should be cleared during reset handling");
 });
 
-test("manual reset clears history and pauses automation instead of bootstrapping orders", () => {
+test("manual reset clears history and immediately resumes scanning without bootstrapping orders", () => {
   const server = read("server.js");
   const resetMatch = server.match(/async function resetSimulation\([^)]*\) \{([\s\S]*?)\n\}/);
   assert.ok(resetMatch, "resetSimulation should exist");
@@ -28,11 +28,21 @@ test("manual reset clears history and pauses automation instead of bootstrapping
 
   assert.doesNotMatch(resetBody, /bootstrapHistoricalTrades\(/, "manual reset must not create historical trades immediately");
   assert.doesNotMatch(resetBody, /botTick\(/, "manual reset must not immediately run the trading loop");
-  assert.match(resetBody, /state\.bot\.active\s*=\s*false/, "manual reset should pause the bot until the user resumes it");
-  assert.match(resetBody, /paused-after-reset/, "manual reset should keep a distinct paused-after-reset state");
+  assert.match(resetBody, /state\.bot\.active\s*=\s*true/, "manual reset should keep the bot scanning after the reset");
+  assert.match(resetBody, /waiting-live-cycle/, "manual reset should return to live scanning status");
+  assert.doesNotMatch(resetBody, /paused-after-reset/, "manual reset should not create a reset-pause state anymore");
   assert.match(resetBody, /manualResetAt/, "manual reset should stamp a reset marker for stale client-backup rejection");
-  assert.match(bootstrapBody, /paused-after-reset/, "startup bootstrap must not backfill orders after a saved manual reset");
   assert.match(bootstrapBody, /manualResetAt/, "startup bootstrap must also respect reset markers preserved through market errors");
   assert.match(server, /stale-client-backup-after-reset/, "server should reject old browser backups after manual reset");
-  assert.match(server, /keepResetPause/, "market refresh errors should not hide the reset-paused state");
+});
+
+test("automation has no user pause switch and only stops for low balance", () => {
+  const html = read("public/index.html");
+  const app = read("public/app.js");
+  const server = read("server.js");
+
+  assert.doesNotMatch(html, /id="toggleBot"/, "topbar should not expose a pause/resume button");
+  assert.doesNotMatch(app, /toggleBot\.addEventListener/, "frontend should not wire a pause/resume action");
+  assert.doesNotMatch(server, /url\.pathname === "\/api\/control"/, "backend should not accept manual pause control");
+  assert.match(server, /paused-low-balance/, "automation may still stop when balance is below the minimum ticket size");
 });

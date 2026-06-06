@@ -259,6 +259,19 @@ function mergeLoadedState(loaded) {
   const fresh = createInitialState();
   const loadedMarket = { ...(loaded.market || {}) };
   delete loadedMarket["sent" + "iment"];
+  const loadedAccount = migrateAccountFunding({ ...fresh.account, ...loaded.account }, fresh.account);
+  const bot = { ...fresh.bot, ...loaded.bot };
+  if (loadedAccount.availableBalanceUsdt >= CONFIG.minStakeUsdt) {
+    bot.active = true;
+    if (String(bot.status || "").includes("paused")) {
+      bot.status = "waiting-live-cycle";
+      bot.note = "系统已重新开始，自动扫描 10m/15m 事件合约信号。";
+    }
+  } else {
+    bot.active = false;
+    bot.status = "paused-low-balance";
+    bot.note = "余额低于 5 USDT，自动化停止；重置模拟盘或补足模拟余额后继续。";
+  }
   const trades = normalizeTradeHistory(loaded.trades);
   let openTrade = loaded.openTrade ? normalizeTradeShape(loaded.openTrade) : null;
   let userOpenTrade = loaded.userOpenTrade ? normalizeTradeShape(loaded.userOpenTrade) : null;
@@ -272,13 +285,13 @@ function mergeLoadedState(loaded) {
     ...loaded,
     mode: fresh.mode,
     config: { ...fresh.config, ...loaded.config, ...CONFIG },
-    bot: { ...fresh.bot, ...loaded.bot },
+    bot,
     market: {
       ...fresh.market,
       ...loadedMarket,
       symbol: CONFIG.symbol,
     },
-    account: migrateAccountFunding({ ...fresh.account, ...loaded.account }, fresh.account),
+    account: loadedAccount,
     openTrade,
     userOpenTrade,
     trades,
@@ -386,7 +399,7 @@ function restoreClientSnapshot(snapshot = {}) {
     return { restored: false, reason: "empty-client-backup" };
   }
   const serverResetAt = state.bot?.manualResetAt || null;
-  const resetLocked = Boolean(serverResetAt || state.bot?.status === "paused-after-reset");
+  const resetLocked = Boolean(serverResetAt);
   const backupResetAt = snapshot.serverResetAt || null;
   if (resetLocked && (!serverResetAt || backupResetAt !== serverResetAt)) {
     return { restored: false, reason: "stale-client-backup-after-reset" };
@@ -703,6 +716,61 @@ function buildStrategyLab() {
       matcher: (trade) => Number(trade.rsi || 50) >= 68 || Number(trade.rsi || 50) <= 32,
       liveScore: signal ? Math.round(Math.min(99, Math.abs(Number(signal.rsi || 50) - 50) * 2)) : 0,
       lesson: "RSI 末端追单降级为二次确认，防止事件到期点被回拉。",
+    }),
+    createStrategyCandidate({
+      key: "edge-retest-10m",
+      name: "回踩确认 10m",
+      settled,
+      matcher: (trade) => trade.durationMinutes === 10
+        && Number(trade.volumeRatio || 0) >= 1.02
+        && Math.abs(Number(trade.momentum3 || 0)) >= 0.0006
+        && Math.abs(Number(trade.score || 0)) >= 0.42,
+      liveScore: signal
+        ? Math.round(Math.min(99, Math.max(1, (Math.abs(Number(signal.score || 0)) * 62) + (Number(signal.volumeRatio || 1) - 1) * 26)))
+        : 0,
+      lesson: "不追第一下冲动，等回踩不破再给10分钟票据机会，核心是让到期窗口站在入场价同侧。",
+    }),
+    createStrategyCandidate({
+      key: "expiry-compression-filter",
+      name: "到期窄幅过滤",
+      settled,
+      matcher: (trade) => Math.abs(Number(trade.priceMovePct || 0)) < 0.05 || Number(trade.confidence || 0) < 0.62,
+      liveScore: signal
+        ? Math.round(Math.min(96, Math.max(5, 92 - Math.abs(Number(signal.score || 0)) * 45 - Math.abs(Number(signal.momentum3 || 0)) * 18000)))
+        : 74,
+      lesson: "买大小最怕到期价差贴着入场价，窄幅、低动量、低胜率样本只做影子记录，不消耗票据。",
+    }),
+    createStrategyCandidate({
+      key: "opening-burst-ticket",
+      name: "开盘脉冲票",
+      settled,
+      matcher: (trade) => trade.durationMinutes === 10
+        && Number(trade.volumeRatio || 0) >= 1.2
+        && Math.abs(Number(trade.momentum3 || 0)) >= 0.0012,
+      liveScore: signal
+        ? Math.round(Math.min(99, Math.max(1, Number(signal.volumeRatio || 1) * 34 + Math.abs(Number(signal.momentum3 || 0)) * 22000)))
+        : 0,
+      lesson: "只吃突然放量后的前半段10分钟，不把已经走完的尾段当成新机会。",
+    }),
+    createStrategyCandidate({
+      key: "loss-cooldown-ticket",
+      name: "亏损后降档票",
+      settled,
+      matcher: (trade, index, rows) => rows[index + 1]?.result === "LOSS" || trade.result === "LOSS",
+      liveScore: state.trades[0]?.result === "LOSS" ? 86 : 42,
+      lesson: "上一票失败后继续扫描但降低投入，只允许更高胜率信号触发，不用情绪把亏损追回来。",
+    }),
+    createStrategyCandidate({
+      key: "fifteen-minute-hold",
+      name: "15m 延续票",
+      settled,
+      matcher: (trade) => trade.durationMinutes === 15
+        && Number(trade.volumeRatio || 0) >= 1.08
+        && Math.abs(Number(trade.score || 0)) >= 0.55,
+      liveScore: signal
+        ? Math.round(Math.min(99, Math.max(1, Number(signal.confidence || 0) * 54 + Number(signal.volumeRatio || 1) * 24)))
+        : 0,
+      lesson: "15分钟只给趋势还没走完的票，量能和置信度不同向时宁愿回到10分钟。",
     }),
     createStrategyCandidate({
       key: "weisu-manual",
@@ -1162,13 +1230,7 @@ async function refreshMarket(force = false) {
       });
     } catch (error) {
       mutateState(() => {
-        const keepResetPause = !state.bot.active && state.bot.manualResetAt && !state.trades.length && !state.openTrade && !state.userOpenTrade;
         state.market.source = state.market.source === "none" ? "Binance disconnected" : state.market.source;
-        if (keepResetPause) {
-          state.bot.dataSource = state.market.candles.length ? `${state.market.source} 路 stale` : "Binance disconnected";
-          state.bot.lastError = error.message;
-          return;
-        }
         state.bot.status = state.market.candles.length ? "market-stale" : "market-disconnected";
         state.bot.dataSource = state.market.candles.length ? `${state.market.source} · stale` : "Binance disconnected";
         state.bot.lastError = error.message;
@@ -2127,8 +2189,7 @@ function recalculateStats() {
 
 async function bootstrapHistoricalTrades() {
   if (state.trades.length > 0 || state.openTrade || state.userOpenTrade) return;
-  if (!state.bot.active && state.bot.manualResetAt) return;
-  if (state.bot.status === "paused-after-reset") return;
+  if (state.bot.manualResetAt) return;
 
   await refreshMarket(true);
   const closed = state.market.candles.filter((candle) => candle.closed);
@@ -2171,19 +2232,13 @@ async function botTick() {
       settleOpenTradeIfDue("user", now);
       if (aiSettlementStatus === "waiting") return;
 
-      if (!state.bot.active) {
-        if (state.openTrade) return;
-        if (state.bot.status === "paused-after-reset") {
-          state.bot.nextDecisionTime = null;
-          state.bot.nextSettlementTime = null;
-          return;
-        }
-        state.bot.status = state.account.availableBalanceUsdt < CONFIG.minStakeUsdt ? "paused-low-balance" : "paused";
-        state.bot.note = state.bot.status === "paused-low-balance"
-          ? "余额低于 5 USDT，自动化暂停；重置模拟账户后会继续扫描 10/15 分钟事件订单。"
-          : "自动化已暂停；恢复后会继续扫描 Binance 永续1分钟波动。";
+      if (state.account.availableBalanceUsdt < CONFIG.minStakeUsdt) {
+        state.bot.active = false;
+        state.bot.status = "paused-low-balance";
+        state.bot.note = "余额低于 5 USDT，自动化停止；重置模拟盘后会立刻继续扫描 10m/15m 事件订单。";
         return;
       }
+      state.bot.active = true;
 
       const canEvaluate = shouldEvaluateNow(now);
       if (!state.openTrade && canEvaluate && state.account.availableBalanceUsdt >= CONFIG.minStakeUsdt) {
@@ -2229,6 +2284,9 @@ async function manualAdvance() {
     const currentBucket = bucketOf(now);
     settleOpenTradeIfDue("ai", now);
     settleOpenTradeIfDue("user", now);
+    if (state.account.availableBalanceUsdt >= CONFIG.minStakeUsdt) {
+      state.bot.active = true;
+    }
     if (state.bot.active && !state.openTrade && state.account.availableBalanceUsdt >= CONFIG.minStakeUsdt) {
       const signalCandles = state.market.baseCandles?.length ? state.market.baseCandles : state.market.candles;
       const signal = buildSignal(signalCandles);
@@ -2242,16 +2300,10 @@ async function manualAdvance() {
         state.bot.status = "signal-skipped";
         state.bot.note = `${decision.reason} 已刷新 Binance 永续行情，暂不下单。`;
       }
-    } else if (!state.openTrade && !state.bot.active) {
+    } else if (!state.openTrade && state.account.availableBalanceUsdt < CONFIG.minStakeUsdt) {
       state.bot.nextDecisionTime = null;
-      if (state.bot.status === "paused-after-reset") {
-        state.bot.nextSettlementTime = null;
-        return;
-      }
-      state.bot.status = state.account.availableBalanceUsdt < CONFIG.minStakeUsdt ? "paused-low-balance" : "paused";
-      state.bot.note = state.bot.status === "paused-low-balance"
-        ? "余额低于 5 USDT，自动化暂停；重置模拟账户后会继续扫描 10/15 分钟事件订单。"
-        : "自动化已暂停；恢复后会继续扫描 Binance 永续1分钟波动。";
+      state.bot.status = "paused-low-balance";
+      state.bot.note = "余额低于 5 USDT，自动化停止；重置模拟盘后会立刻继续扫描 10m/15m 事件订单。";
     } else if (!state.openTrade) {
       state.bot.nextDecisionTime = new Date(now + EVALUATION_COOLDOWN_MS).toISOString();
       state.bot.status = "scanning-live-signal";
@@ -2266,11 +2318,11 @@ async function resetSimulation() {
   state = createInitialState();
   state.market = previousMarket || state.market;
   state.bot.dataSource = state.market.source || state.bot.dataSource;
-  state.bot.active = false;
-  state.bot.status = "paused-after-reset";
+  state.bot.active = true;
+  state.bot.status = "waiting-live-cycle";
   state.bot.manualResetAt = resetAt;
-  state.bot.note = "模拟盘已重置：账户、订单、复盘和当前票据已清空；自动化已暂停，点击播放后才会重新扫描并模拟下单。";
-  state.bot.nextDecisionTime = null;
+  state.bot.note = "模拟盘已重置：账户、订单、复盘和当前票据已清空；系统已自动恢复扫描，余额足够就持续寻找 10m/15m 事件合约信号。";
+  state.bot.nextDecisionTime = new Date(Date.now() + EVALUATION_COOLDOWN_MS).toISOString();
   state.bot.nextSettlementTime = null;
   state.updatedAt = nowIso();
   recalculateStats();
@@ -2346,17 +2398,6 @@ const server = http.createServer(async (req, res) => {
       res.write(`data: ${JSON.stringify(publicState())}\n\n`);
       subscribers.add(res);
       req.on("close", () => subscribers.delete(res));
-      return;
-    }
-
-    if (url.pathname === "/api/control" && req.method === "POST") {
-      const body = await readBody(req);
-      mutateState(() => {
-        state.bot.active = Boolean(body.active);
-        state.bot.status = state.bot.active ? "waiting-live-cycle" : "paused";
-        state.bot.note = state.bot.active ? "自动化已恢复。" : "自动化已暂停。";
-      });
-      sendJson(res, publicState());
       return;
     }
 

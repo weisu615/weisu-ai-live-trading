@@ -34,9 +34,11 @@ test("backend publishes event-contract pulse data for binary tickets", () => {
 });
 
 test("chart panel stays compact when the side rail grows", () => {
+  const html = read("public/index.html");
   const css = read("public/styles.css");
 
-  assert.match(css, /\.dashboard\s*{[\s\S]*align-items:\s*start;/, "dashboard rows should not stretch the chart panel to match the side rail");
+  assert.match(html, /<section class="dashboard">[\s\S]*<aside class="side-panel">[\s\S]*<section class="intelligence-grid"/, "event pulse and strategy lab should live inside the dashboard flow");
+  assert.match(css, /grid-template-areas:\s*"chart side"\s*"intelligence side"/, "dashboard should let the left workflow continue below the chart while the ticket rail stays on the right");
   assert.match(css, /\.chart-panel\s*{[\s\S]*min-height:\s*auto;/, "chart panel should not create a large empty block under the overview");
   assert.match(css, /\.chart-wrap\s*{[\s\S]*height:\s*clamp\(420px,\s*52vh,\s*620px\)/, "main K-line chart should have a stable responsive height");
 });
